@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  nama      String
+  email     String   @unique
+  password  String
+  role      Role     @default(PETUGAS)
+  hp        String?  
+  createdAt DateTime @default(now())
+}
+
+
+
+model Aset {
+  id            Int             @id @default(autoincrement())
+  nia           String          @unique
+  nama          String
+  kategori      String
+  lokasi        String
+  tahun         Int
+  nilai         Decimal         @db.Decimal(15,2)
+  kondisi       String
+  catatan       String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  pemeliharaan  Pemeliharaan[]  // Relasi ke tabel Pemeliharaan
+}
+
+model Pemeliharaan {
+  id         Int       @id @default(autoincrement())
+  asetId     Int
+  tanggal    DateTime              // Tanggal pemeliharaan
+  jenis      String                // Jenis pemeliharaan
+  biaya      Decimal?  @db.Decimal(15,2) // Opsional supaya tidak error
+  pelaksana  String                // Nama teknisi / tim
+  catatan    String?               // Catatan tambahan
+  status     String                // Terjadwal / Dalam Proses / Selesai
+  createdAt  DateTime  @default(now())
+
+  aset       Aset      @relation(fields: [asetId], references: [id], onDelete: Cascade)
+}
+
+enum Role {
+  ADMIN
+  PETUGAS
+  PIMPINAN
+  TEKNISI
+}
