@@ -7,50 +7,131 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  ADMIN
+  PETUGAS
+  PIMPINAN
+  TEKNISI
+}
+
+enum KategoriAset {
+  KONSTRUKSI_SIPIL
+  PIPA
+  SUMUR_BOR
+  POMPA
+  KATUP
+  MOTOR_LISTRIK
+  KELISTRIKAN
+  KONTROL
+  BANGUNAN
+  TANAH
+}
+
+//* ===== Penyusutan ===== */
+enum MetodePenyusutan {
+  GARIS_LURUS
+  SALDO_MENURUN
+}
+
+enum GolonganDepresiasi {
+  GOL_I
+  GOL_II
+  GOL_III
+  GOL_IV
+  BANGUNAN_PERMANEN
+  BANGUNAN_NON_PERMANEN
+}
+
+//* ===== Pemeliharaan (sesuai PDAM) ===== */
+enum JenisPekerjaanPemeliharaan {
+  INSPEKSI
+  PELUMASAN
+  KALIBRASI
+  GANTI_SPAREPART
+  PERBAIKAN_RINGAN
+  PERBAIKAN_BESAR
+  OVERHAUL
+  TESTING
+}
+
+enum StrategiPerlakuan {
+  PREVENTIF
+  KOREKTIF
+  PREDIKTIF
+}
+
 model User {
   id        Int      @id @default(autoincrement())
   nama      String
   email     String   @unique
   password  String
   role      Role     @default(PETUGAS)
-  hp        String?  
+  hp        String?
   createdAt DateTime @default(now())
 }
 
-
-
 model Aset {
-  id            Int             @id @default(autoincrement())
-  nia           String          @unique
-  nama          String
-  kategori      String
-  lokasi        String
-  tahun         Int
-  nilai         Decimal         @db.Decimal(15,2)
-  kondisi       String
-  catatan       String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  pemeliharaan  Pemeliharaan[]  // Relasi ke tabel Pemeliharaan
+  id           Int            @id @default(autoincrement())
+  nia          String         @unique
+  nama         String
+  kategori     KategoriAset
+  lokasi       String
+  tahun        Int
+  nilai        Decimal        @db.Decimal(15, 2)
+  kondisi      String
+  catatan      String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  pemeliharaan Pemeliharaan[]
+
+  //* ===== Field penyusutan ===== */
+  tanggalOperasi     DateTime?
+  umurManfaatTahun   Int?
+  nilaiResidu        Decimal?            @db.Decimal(15, 2)
+  metodePenyusutan   MetodePenyusutan?
+  golonganDepresiasi GolonganDepresiasi?
+  mulaiPenyusutan    DateTime?
+  penyusutan         Penyusutan[]
 }
 
 model Pemeliharaan {
-  id         Int       @id @default(autoincrement())
-  asetId     Int
-  tanggal    DateTime              // Tanggal pemeliharaan
-  jenis      String                // Jenis pemeliharaan
-  biaya      Decimal?  @db.Decimal(15,2) // Opsional supaya tidak error
-  pelaksana  String                // Nama teknisi / tim
-  catatan    String?               // Catatan tambahan
-  status     String                // Terjadwal / Dalam Proses / Selesai
-  createdAt  DateTime  @default(now())
+  id            Int                           @id @default(autoincrement())
+  asetId        Int
+  tanggal       DateTime
+  jenis         String
+  biaya         Decimal?                      @db.Decimal(15, 2) // legacy total (auto-diisi)
+  pelaksana     String
+  catatan       String?
+  status        String
+  createdAt     DateTime                      @default(now())
 
-  aset       Aset      @relation(fields: [asetId], references: [id], onDelete: Cascade)
+  //* ===== Detail PDAM (opsional) ===== */
+  jenisPekerjaan JenisPekerjaanPemeliharaan?
+  strategi       StrategiPerlakuan?
+  downtimeJam    Decimal?                     @db.Decimal(10, 2)
+  sukuCadang     Json?
+  biayaMaterial  Decimal?                     @db.Decimal(15, 2)
+  biayaJasa      Decimal?                     @db.Decimal(15, 2)
+
+  aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
+
+  @@index([asetId, tanggal])
 }
 
-enum Role {
-  ADMIN
-  PETUGAS
-  PIMPINAN
-  TEKNISI
+model Penyusutan {
+  id         Int                @id @default(autoincrement())
+  asetId     Int
+  periode    DateTime
+  metode     MetodePenyusutan
+  tarif      Decimal            @db.Decimal(6, 3)
+  nilaiAwal  Decimal            @db.Decimal(15, 2)
+  beban      Decimal            @db.Decimal(15, 2)
+  akumulasi  Decimal            @db.Decimal(15, 2)
+  nilaiAkhir Decimal            @db.Decimal(15, 2)
+  dibuatPada DateTime           @default(now())
+
+  aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
+
+  @@unique([asetId, periode])
+  @@index([periode])
 }
