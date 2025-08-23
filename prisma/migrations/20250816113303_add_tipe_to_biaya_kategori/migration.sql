@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `biayakategori` ADD COLUMN `tipe` ENUM('BIAYA', 'PENDAPATAN', 'ASET') NOT NULL DEFAULT 'BIAYA';

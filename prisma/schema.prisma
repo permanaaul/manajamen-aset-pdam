@@ -1,3 +1,7 @@
+// ==============================
+// prisma/schema.prisma (Lengkap & Fixed) + Voucher support
+// ==============================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,6 +11,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+//* ========= Auth & Master ========= */
 enum Role {
   ADMIN
   PETUGAS
@@ -27,7 +32,7 @@ enum KategoriAset {
   TANAH
 }
 
-//* ===== Penyusutan ===== */
+//* ========= Penyusutan ========= */
 enum MetodePenyusutan {
   GARIS_LURUS
   SALDO_MENURUN
@@ -42,7 +47,7 @@ enum GolonganDepresiasi {
   BANGUNAN_NON_PERMANEN
 }
 
-//* ===== Pemeliharaan (sesuai PDAM) ===== */
+//* ========= Pemeliharaan (PDAM) ========= */
 enum JenisPekerjaanPemeliharaan {
   INSPEKSI
   PELUMASAN
@@ -60,6 +65,46 @@ enum StrategiPerlakuan {
   PREDIKTIF
 }
 
+//* ========= Akuntansi Tambahan ========= */
+enum JenisUnitBiaya {
+  PRODUKSI
+  DISTRIBUSI
+  PELAYANAN
+  ADMINISTRASI
+  UMUM_SDM
+  LABORATORIUM
+  LAINNYA
+}
+
+enum TipeBiaya {
+  OPEX
+  CAPEX
+}
+
+//* ========= Kategori Biaya: tipe laporan ========= */
+enum TipeKategori {
+  BIAYA
+  PENDAPATAN
+  ASET
+}
+
+//* ========= COA ========= */
+enum AkunType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+  CONTRA_ASSET
+  CONTRA_REVENUE
+}
+
+enum NormalBalance {
+  DEBIT
+  CREDIT
+}
+
+//* ========= Models ========= */
 model User {
   id        Int      @id @default(autoincrement())
   nama      String
@@ -68,70 +113,308 @@ model User {
   role      Role     @default(PETUGAS)
   hp        String?
   createdAt DateTime @default(now())
+
+  jurnalDibuat   JurnalBiaya[]   @relation("JurnalCreatedBy")
+  anggaranDibuat AnggaranBiaya[] @relation("AnggaranCreatedBy")
+
+  // back-relation untuk JurnalUmum (dibuat)
+  glDibuat  JurnalUmum[] @relation("JurnalUmumCreatedBy")
+
+  // >>> NEW: back-relation untuk JurnalUmum (diposting)
+  glPosted  JurnalUmum[] @relation("JurnalUmumPostedBy")
 }
 
 model Aset {
-  id           Int            @id @default(autoincrement())
-  nia          String         @unique
-  nama         String
-  kategori     KategoriAset
-  lokasi       String
-  tahun        Int
-  nilai        Decimal        @db.Decimal(15, 2)
-  kondisi      String
-  catatan      String?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  pemeliharaan Pemeliharaan[]
+  id        Int          @id @default(autoincrement())
+  nia       String       @unique
+  nama      String
+  kategori  KategoriAset
+  lokasi    String
+  tahun     Int
+  nilai     Decimal      @db.Decimal(15, 2)
+  kondisi   String
+  catatan   String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
-  //* ===== Field penyusutan ===== */
+  pemeliharaan Pemeliharaan[]
+  penyusutan   Penyusutan[]
+
+  // ===== Field penyusutan =====
   tanggalOperasi     DateTime?
   umurManfaatTahun   Int?
   nilaiResidu        Decimal?            @db.Decimal(15, 2)
   metodePenyusutan   MetodePenyusutan?
   golonganDepresiasi GolonganDepresiasi?
   mulaiPenyusutan    DateTime?
-  penyusutan         Penyusutan[]
+
+  // ===== Mapping akun (CAPEX & Penyusutan)
+  akunAsetId      Int?
+  akunAkumulasiId Int?
+
+  akunAset      Akun? @relation("AsetAkunAset", fields: [akunAsetId], references: [id], onDelete: SetNull)
+  akunAkumulasi Akun? @relation("AsetAkunAkumulasi", fields: [akunAkumulasiId], references: [id], onDelete: SetNull)
+
+  // back-relations akuntansi
+  jurnalBiaya   JurnalBiaya[]
+  anggaranBiaya AnggaranBiaya[]
+  alokasiBiaya  JurnalBiayaAlokasi[]
+
+  // GL lines
+  glLines JurnalUmumLine[] @relation("GL_Aset")
 }
 
 model Pemeliharaan {
-  id            Int                           @id @default(autoincrement())
-  asetId        Int
-  tanggal       DateTime
-  jenis         String
-  biaya         Decimal?                      @db.Decimal(15, 2) // legacy total (auto-diisi)
-  pelaksana     String
-  catatan       String?
-  status        String
-  createdAt     DateTime                      @default(now())
+  id        Int      @id @default(autoincrement())
+  asetId    Int
+  tanggal   DateTime
+  jenis     String
+  biaya     Decimal? @db.Decimal(15, 2)
+  pelaksana String
+  catatan   String?
+  status    String
+  createdAt DateTime @default(now())
 
-  //* ===== Detail PDAM (opsional) ===== */
+  // ===== Detail PDAM (opsional)
   jenisPekerjaan JenisPekerjaanPemeliharaan?
   strategi       StrategiPerlakuan?
-  downtimeJam    Decimal?                     @db.Decimal(10, 2)
+  downtimeJam    Decimal?                    @db.Decimal(10, 2)
   sukuCadang     Json?
-  biayaMaterial  Decimal?                     @db.Decimal(15, 2)
-  biayaJasa      Decimal?                     @db.Decimal(15, 2)
+  biayaMaterial  Decimal?                    @db.Decimal(15, 2)
+  biayaJasa      Decimal?                    @db.Decimal(15, 2)
 
   aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
+
+  // back-relations akuntansi
+  jurnalBiaya JurnalBiaya[]
 
   @@index([asetId, tanggal])
 }
 
 model Penyusutan {
-  id         Int                @id @default(autoincrement())
+  id         Int              @id @default(autoincrement())
   asetId     Int
   periode    DateTime
   metode     MetodePenyusutan
-  tarif      Decimal            @db.Decimal(6, 3)
-  nilaiAwal  Decimal            @db.Decimal(15, 2)
-  beban      Decimal            @db.Decimal(15, 2)
-  akumulasi  Decimal            @db.Decimal(15, 2)
-  nilaiAkhir Decimal            @db.Decimal(15, 2)
-  dibuatPada DateTime           @default(now())
+  tarif      Decimal          @db.Decimal(6, 3)
+  nilaiAwal  Decimal          @db.Decimal(15, 2)
+  beban      Decimal          @db.Decimal(15, 2)
+  akumulasi  Decimal          @db.Decimal(15, 2)
+  nilaiAkhir Decimal          @db.Decimal(15, 2)
+  dibuatPada DateTime         @default(now())
 
   aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
 
+  // back-relations akuntansi
+  jurnalBiaya JurnalBiaya[]
+
+  // GL line back-rel
+  glLines JurnalUmumLine[] @relation("GL_Penyusutan")
+
   @@unique([asetId, periode])
   @@index([periode])
+}
+
+model UnitBiaya {
+  id        Int            @id @default(autoincrement())
+  kode      String         @unique
+  nama      String
+  jenis     JenisUnitBiaya @default(LAINNYA)
+  parentId  Int?
+  isActive  Boolean        @default(true)
+  createdAt DateTime       @default(now())
+
+  parent   UnitBiaya?  @relation("UnitBiayaHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children UnitBiaya[] @relation("UnitBiayaHierarchy")
+
+  jurnalAlokasi JurnalBiayaAlokasi[]
+  anggaran      AnggaranBiaya[]
+
+  // GL lines
+  glLines JurnalUmumLine[] @relation("GL_UnitBiaya")
+
+  @@index([parentId])
+}
+
+model BiayaKategori {
+  id        Int          @id @default(autoincrement())
+  kode      String       @unique
+  nama      String
+  tipe      TipeKategori @default(BIAYA)
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  // Mapping default akun (opsional)
+  debitAkunId  Int?
+  kreditAkunId Int?
+
+  debitAkun  Akun? @relation("BiayaKategoriDebitAkun", fields: [debitAkunId], references: [id], onDelete: SetNull)
+  kreditAkun Akun? @relation("BiayaKategoriKreditAkun", fields: [kreditAkunId], references: [id], onDelete: SetNull)
+
+  jurnal   JurnalBiaya[]
+  anggaran AnggaranBiaya[]
+}
+
+model JurnalBiaya {
+  id         Int       @id @default(autoincrement())
+  tanggal    DateTime
+  kategoriId Int
+  tipe       TipeBiaya @default(OPEX)
+  uraian     String?
+  ref        String?
+  debit      Decimal   @default(0) @db.Decimal(15, 2)
+  kredit     Decimal   @default(0) @db.Decimal(15, 2)
+
+  asetId         Int?
+  pemeliharaanId Int?
+  penyusutanId   Int?
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  kategori     BiayaKategori @relation(fields: [kategoriId], references: [id], onDelete: Restrict)
+  aset         Aset?         @relation(fields: [asetId], references: [id], onDelete: SetNull)
+  pemeliharaan Pemeliharaan? @relation(fields: [pemeliharaanId], references: [id], onDelete: SetNull)
+  penyusutan   Penyusutan?   @relation(fields: [penyusutanId], references: [id], onDelete: SetNull)
+  createdBy    User?         @relation("JurnalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  alokasi JurnalBiayaAlokasi[]
+
+  glLines JurnalUmumLine[] @relation("GL_JurnalBiaya")
+
+  @@index([tanggal])
+  @@index([kategoriId])
+  @@index([asetId])
+  @@index([pemeliharaanId])
+  @@index([penyusutanId])
+
+  // >>> FIX: cegah duplikat baris untuk penyusutan yang sama per kategori
+  @@unique([penyusutanId, kategoriId])
+  @@index([penyusutanId, kategoriId])
+}
+
+model JurnalBiayaAlokasi {
+  id          Int      @id @default(autoincrement())
+  jurnalId    Int
+  unitBiayaId Int?
+  asetId      Int?
+  persen      Decimal? @db.Decimal(5, 2)
+  jumlah      Decimal? @db.Decimal(15, 2)
+
+  jurnal    JurnalBiaya @relation(fields: [jurnalId], references: [id], onDelete: Cascade)
+  unitBiaya UnitBiaya?  @relation(fields: [unitBiayaId], references: [id], onDelete: SetNull)
+  aset      Aset?       @relation(fields: [asetId], references: [id], onDelete: SetNull)
+
+  @@index([jurnalId])
+  @@index([unitBiayaId])
+  @@index([asetId])
+}
+
+model AnggaranBiaya {
+  id          Int       @id @default(autoincrement())
+  tahun       Int
+  bulan       Int       @default(0) // 0..12 (0 = tahunan)
+  kategoriId  Int
+  tipe        TipeBiaya @default(OPEX)
+  unitBiayaId Int?
+  asetId      Int?
+  jumlah      Decimal   @db.Decimal(15, 2)
+
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  kategori  BiayaKategori @relation(fields: [kategoriId], references: [id], onDelete: Cascade)
+  unitBiaya UnitBiaya?    @relation(fields: [unitBiayaId], references: [id], onDelete: SetNull)
+  aset      Aset?         @relation(fields: [asetId], references: [id], onDelete: SetNull)
+  createdBy User?         @relation("AnggaranCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([tahun, bulan, kategoriId, unitBiayaId, asetId])
+  @@index([tahun, bulan])
+  @@index([kategoriId])
+  @@index([unitBiayaId])
+  @@index([asetId])
+}
+
+//* ========= COA & Jurnal Umum ========= */
+
+model Akun {
+  id        Int           @id @default(autoincrement())
+  kode      String        @unique
+  nama      String
+  tipe      AkunType
+  normal    NormalBalance
+  parentId  Int?
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+
+  parent   Akun?  @relation("AkunHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Akun[] @relation("AkunHierarchy")
+
+  asetSebagaiAkunAset      Aset[]          @relation("AsetAkunAset")
+  asetSebagaiAkunAkumulasi Aset[]          @relation("AsetAkunAkumulasi")
+  kategoriSebagaiDebit     BiayaKategori[] @relation("BiayaKategoriDebitAkun")
+  kategoriSebagaiKredit    BiayaKategori[] @relation("BiayaKategoriKreditAkun")
+
+  glLines JurnalUmumLine[]
+}
+
+model JurnalUmum {
+  id          Int      @id @default(autoincrement())
+  tanggal     DateTime
+  ref         String?
+  uraian      String?
+  sumber      String?
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  // >>> NEW: Voucher & posting metadata
+  voucherNo   String?  @unique
+  voucherDate DateTime?
+  postedAt    DateTime?
+  postedById  Int?
+  printCount  Int      @default(0)
+
+  createdBy User? @relation("JurnalUmumCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // >>> NEW: postedBy rel
+  postedBy User? @relation("JurnalUmumPostedBy", fields: [postedById], references: [id], onDelete: SetNull)
+
+  lines JurnalUmumLine[]
+
+  @@index([tanggal])
+  @@index([voucherNo])
+}
+
+model JurnalUmumLine {
+  id            Int     @id @default(autoincrement())
+  headerId      Int
+  akunId        Int
+  unitBiayaId   Int?
+  asetId        Int?
+  jurnalBiayaId Int?
+  penyusutanId  Int?
+  debit         Decimal @default(0) @db.Decimal(15, 2)
+  kredit        Decimal @default(0) @db.Decimal(15, 2)
+
+  header JurnalUmum @relation(fields: [headerId], references: [id], onDelete: Cascade)
+  akun   Akun       @relation(fields: [akunId], references: [id], onDelete: Restrict)
+
+  unitBiaya   UnitBiaya?   @relation("GL_UnitBiaya", fields: [unitBiayaId], references: [id], onDelete: SetNull)
+  aset        Aset?        @relation("GL_Aset", fields: [asetId], references: [id], onDelete: SetNull)
+  jurnalBiaya JurnalBiaya? @relation("GL_JurnalBiaya", fields: [jurnalBiayaId], references: [id], onDelete: SetNull)
+  penyusutan  Penyusutan?  @relation("GL_Penyusutan", fields: [penyusutanId], references: [id], onDelete: SetNull)
+
+  @@index([headerId])
+  @@index([akunId])
+  @@index([unitBiayaId])
+  @@index([asetId])
+  @@index([jurnalBiayaId])
+  @@index([penyusutanId])
+}
+
+// ========= NEW: SequenceCounter untuk penomoran voucher =========
+model SequenceCounter {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value Int    @default(0)
 }
