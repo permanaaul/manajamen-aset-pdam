@@ -1,5 +1,5 @@
 // ==============================
-// prisma/schema.prisma (Lengkap & Fixed) + Voucher support
+// prisma/schema.prisma — lengkap + fitur Hublang tambahan
 // ==============================
 
 generator client {
@@ -117,30 +117,36 @@ model User {
   jurnalDibuat   JurnalBiaya[]   @relation("JurnalCreatedBy")
   anggaranDibuat AnggaranBiaya[] @relation("AnggaranCreatedBy")
 
-  // back-relation untuk JurnalUmum (dibuat)
-  glDibuat  JurnalUmum[] @relation("JurnalUmumCreatedBy")
+  // GL header relations
+  glDibuat JurnalUmum[] @relation("JurnalUmumCreatedBy")
+  glPosted JurnalUmum[] @relation("JurnalUmumPostedBy")
 
-  // >>> NEW: back-relation untuk JurnalUmum (diposting)
-  glPosted  JurnalUmum[] @relation("JurnalUmumPostedBy")
+  // Hublang
+  hblRuteDitugaskan     HblRute[]       @relation("HblRutePetugas")
+  hblPembayaranDiterima HblPembayaran[] @relation("HblPembayaranPetugas")
+
+  // NEW: WO & koreksi baca
+  hblWorkOrderDitugaskan HblWorkOrder[]  @relation("HblWorkOrderPetugas")
+  hblKoreksiBacaDibuat   HblKoreksiBaca[] @relation("HblKoreksiBacaCreatedBy")
 }
 
 model Aset {
-  id        Int          @id @default(autoincrement())
-  nia       String       @unique
+  id        Int      @id @default(autoincrement())
+  nia       String   @unique
   nama      String
   kategori  KategoriAset
   lokasi    String
   tahun     Int
-  nilai     Decimal      @db.Decimal(15, 2)
+  nilai     Decimal  @db.Decimal(15, 2)
   kondisi   String
   catatan   String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   pemeliharaan Pemeliharaan[]
   penyusutan   Penyusutan[]
 
-  // ===== Field penyusutan =====
+  // Penyusutan fields
   tanggalOperasi     DateTime?
   umurManfaatTahun   Int?
   nilaiResidu        Decimal?            @db.Decimal(15, 2)
@@ -148,14 +154,14 @@ model Aset {
   golonganDepresiasi GolonganDepresiasi?
   mulaiPenyusutan    DateTime?
 
-  // ===== Mapping akun (CAPEX & Penyusutan)
+  // Mapping akun
   akunAsetId      Int?
   akunAkumulasiId Int?
 
   akunAset      Akun? @relation("AsetAkunAset", fields: [akunAsetId], references: [id], onDelete: SetNull)
   akunAkumulasi Akun? @relation("AsetAkunAkumulasi", fields: [akunAkumulasiId], references: [id], onDelete: SetNull)
 
-  // back-relations akuntansi
+  // Akuntansi back-rel
   jurnalBiaya   JurnalBiaya[]
   anggaranBiaya AnggaranBiaya[]
   alokasiBiaya  JurnalBiayaAlokasi[]
@@ -175,7 +181,7 @@ model Pemeliharaan {
   status    String
   createdAt DateTime @default(now())
 
-  // ===== Detail PDAM (opsional)
+  // Detail PDAM (opsional)
   jenisPekerjaan JenisPekerjaanPemeliharaan?
   strategi       StrategiPerlakuan?
   downtimeJam    Decimal?                    @db.Decimal(10, 2)
@@ -185,27 +191,27 @@ model Pemeliharaan {
 
   aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
 
-  // back-relations akuntansi
+  // Akuntansi back-rel
   jurnalBiaya JurnalBiaya[]
 
   @@index([asetId, tanggal])
 }
 
 model Penyusutan {
-  id         Int              @id @default(autoincrement())
+  id         Int       @id @default(autoincrement())
   asetId     Int
   periode    DateTime
   metode     MetodePenyusutan
-  tarif      Decimal          @db.Decimal(6, 3)
-  nilaiAwal  Decimal          @db.Decimal(15, 2)
-  beban      Decimal          @db.Decimal(15, 2)
-  akumulasi  Decimal          @db.Decimal(15, 2)
-  nilaiAkhir Decimal          @db.Decimal(15, 2)
-  dibuatPada DateTime         @default(now())
+  tarif      Decimal   @db.Decimal(6, 3)
+  nilaiAwal  Decimal   @db.Decimal(15, 2)
+  beban      Decimal   @db.Decimal(15, 2)
+  akumulasi  Decimal   @db.Decimal(15, 2)
+  nilaiAkhir Decimal   @db.Decimal(15, 2)
+  dibuatPada DateTime  @default(now())
 
   aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
 
-  // back-relations akuntansi
+  // Akuntansi back-rel
   jurnalBiaya JurnalBiaya[]
 
   // GL line back-rel
@@ -244,7 +250,7 @@ model BiayaKategori {
   isActive  Boolean      @default(true)
   createdAt DateTime     @default(now())
 
-  // Mapping default akun (opsional)
+  // Mapping default akun
   debitAkunId  Int?
   kreditAkunId Int?
 
@@ -280,16 +286,15 @@ model JurnalBiaya {
 
   alokasi JurnalBiayaAlokasi[]
 
+  // GL lines
   glLines JurnalUmumLine[] @relation("GL_JurnalBiaya")
 
+  @@unique([penyusutanId, kategoriId])
   @@index([tanggal])
   @@index([kategoriId])
   @@index([asetId])
   @@index([pemeliharaanId])
   @@index([penyusutanId])
-
-  // >>> FIX: cegah duplikat baris untuk penyusutan yang sama per kategori
-  @@unique([penyusutanId, kategoriId])
   @@index([penyusutanId, kategoriId])
 }
 
@@ -356,6 +361,10 @@ model Akun {
   kategoriSebagaiKredit    BiayaKategori[] @relation("BiayaKategoriKreditAkun")
 
   glLines JurnalUmumLine[]
+
+  // Hublang
+  hblPemetaanAkun       HblPemetaanAkun[]      @relation("HblPemetaanAkunRel")
+  hblAntrianJurnalLines HblAntrianJurnalLine[] @relation("HblAntrianLineAkun")
 }
 
 model JurnalUmum {
@@ -367,17 +376,20 @@ model JurnalUmum {
   createdById Int?
   createdAt   DateTime @default(now())
 
-  // >>> NEW: Voucher & posting metadata
-  voucherNo   String?  @unique
+  // Voucher & posting
+  voucherNo   String?   @unique
   voucherDate DateTime?
   postedAt    DateTime?
   postedById  Int?
-  printCount  Int      @default(0)
+  printCount  Int       @default(0)
 
   createdBy User? @relation("JurnalUmumCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  postedBy  User? @relation("JurnalUmumPostedBy", fields: [postedById], references: [id], onDelete: SetNull)
 
-  // >>> NEW: postedBy rel
-  postedBy User? @relation("JurnalUmumPostedBy", fields: [postedById], references: [id], onDelete: SetNull)
+  // Hublang back-rel
+  hblTagihan    HblTagihan[]       @relation("JurnalHblTagihan")
+  hblPembayaran HblPembayaran[]    @relation("JurnalHblPembayaran")
+  hblAntrian    HblAntrianJurnal[] @relation("JurnalHblAntrian")
 
   lines JurnalUmumLine[]
 
@@ -412,9 +424,613 @@ model JurnalUmumLine {
   @@index([penyusutanId])
 }
 
-// ========= NEW: SequenceCounter untuk penomoran voucher =========
+// Penomoran voucher / dokumen
 model SequenceCounter {
   id    Int    @id @default(autoincrement())
   key   String @unique
   value Int    @default(0)
+}
+
+//* =====================================================================
+   //=======================  H U B L A N G  (M V P)  =====================
+   //===================================================================== *//
+
+enum HblTipePelanggan {
+  SOSIAL
+  NIAGA
+  INSTANSI
+  LAINNYA
+}
+
+enum HblStatusSambungan {
+  AKTIF
+  TUTUP_SEMENTARA
+  PUTUS
+}
+
+enum HblStatusBaca {
+  DRAFT
+  TERVERIFIKASI
+}
+
+enum HblStatusTagihan {
+  DRAFT
+  FINAL
+  POSTED
+}
+
+enum HblMetodeBayar {
+  TUNAI
+  TRANSFER
+  VA
+  LAINNYA
+}
+
+enum HblStatusAntrianJurnal {
+  NOT_POSTED
+  POSTED
+  FAILED
+}
+
+enum HblTingkatTeguran {
+  NONE
+  SP1
+  SP2
+  SP3
+  PUTUS
+}
+
+enum HblTipePemetaanAkun {
+  AR
+  PENDAPATAN_AIR
+  PENDAPATAN_NON_AIR
+  PENDAPATAN_DENDA
+  PAJAK_KELUARAN
+  KAS
+  BANK
+}
+
+enum HblRefType {
+  BILLING
+  PAYMENT
+}
+
+enum HblSkemaDenda {
+  FLAT
+  PERSEN
+  BERTAHAP
+}
+
+//* --- NEW: Work Order & Keluhan enums --- */
+enum HblStatusWO {
+  DRAFT
+  OPEN
+  IN_PROGRESS
+  DONE
+  CANCELED
+}
+
+enum HblPrioritasWO {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum HblKanalKeluhan {
+  WALKIN
+  TELP
+  WEB
+  APP
+  LAINNYA
+}
+
+enum HblStatusKeluhan {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+  CANCELED
+}
+
+//* -------------------------------
+   //Parameter Tarif & Kebijakan
+   //------------------------------- */
+model HblGolonganTarif {
+  id         Int    @id @default(autoincrement())
+  kode       String @unique
+  nama       String
+  diameterMm Int?
+
+  // Minimum charge
+  minChargeM3 Int?
+  minChargeRp Decimal? @db.Decimal(15, 2)
+
+  biayaAdminRp    Decimal  @default(0) @db.Decimal(15, 2)
+  pembulatanDenom Int      @default(1)
+  pajakAktif      Boolean  @default(false)
+  pajakPersen     Decimal? @db.Decimal(5, 2)
+  subsidiCatatan  String?
+  subsidiRp       Decimal? @db.Decimal(15, 2)
+
+  // Kebijakan denda per golongan
+  gracePeriodHari      Int           @default(10)
+  skemaDenda           HblSkemaDenda?
+  dendaFlatPerHariRp   Decimal?      @db.Decimal(15, 2)
+  dendaPersenPerBulan  Decimal?      @db.Decimal(5, 2)
+  dendaBertahapJson    Json?
+  sp1Hari              Int           @default(15)
+  sp2Hari              Int           @default(30)
+  sp3Hari              Int           @default(45)
+  biayaBukaTutupRp     Decimal?      @db.Decimal(15, 2)
+  biayaPasangKembaliRp Decimal?      @db.Decimal(15, 2)
+
+  berlakuDari   DateTime?
+  berlakuSampai DateTime?
+
+  blok      HblTarifBlok[]
+  sambungan HblSambungan[] @relation("HblSambunganGolongan")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model HblTarifBlok {
+  id              Int     @id @default(autoincrement())
+  golonganTarifId Int
+  urutan          Int
+  dariM3          Int?
+  sampaiM3        Int?
+  tarifPerM3      Decimal @db.Decimal(15, 2)
+
+  golongan HblGolonganTarif @relation(fields: [golonganTarifId], references: [id], onDelete: Cascade)
+
+  @@index([golonganTarifId, urutan])
+}
+
+model HblKebijakan {
+  id                        Int     @id @default(1)
+  pembulatanDenom           Int     @default(100)
+  urutanPelunasan           String  @default("pokok->denda->biaya")
+  estimasiFormula           String  @default("avg_3bulan")
+  rolloverDigitMax          Int     @default(6)
+  rolloverDiizinkan         Boolean @default(true)
+  anomaliThresholdPersen    Int     @default(200)
+  anomaliMinM3              Int     @default(5)
+  estimasiBulanTidakTerbaca Int     @default(2)
+  periodLockRule            String  @default("after_posting_gl")
+  distribusiTagihan         String  @default("Cetak")
+  kanalPembayaranAktif      String  @default("Kas,Bank")
+  postingGLEnabled          Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model HblPeriode {
+  id           Int      @id @default(autoincrement())
+  tahun        Int
+  bulan        Int
+  billingFinal Boolean  @default(false)
+  glPosted     Boolean  @default(false)
+  locked       Boolean  @default(false)
+  lockedAt     DateTime?
+  note         String?
+
+  @@unique([tahun, bulan])
+}
+
+//* -------------------------------
+  // Master: Pelanggan, Sambungan, Meter, Rute
+   //------------------------------- */
+model HblPelanggan {
+  id          Int              @id @default(autoincrement())
+  kode        String           @unique
+  nama        String
+  tipe        HblTipePelanggan
+  nik         String?          @db.VarChar(32)
+  npwp        String?          @db.VarChar(32)
+  hp          String?
+  email       String?
+  alamatJalan String?
+  rt          String?          @db.VarChar(8)
+  rw          String?          @db.VarChar(8)
+  kelurahan   String?
+  kecamatan   String?
+  kota        String?
+  aktif       Boolean          @default(true)
+
+  sambungan HblSambungan[]
+
+  // back-rel
+  tagihan    HblTagihan[]
+  workOrders HblWorkOrder[]
+  keluhan    HblKeluhan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model HblSambungan {
+  id              Int                @id @default(autoincrement())
+  noSambungan     String             @unique
+  pelangganId     Int
+  golonganTarifId Int
+  diameterMm      Int
+  alamatSambungan String?
+  ruteId          Int?
+  status          HblStatusSambungan @default(AKTIF)
+  tanggalPasang   DateTime?
+  lat             Float?
+  lng             Float?
+
+  pelanggan     HblPelanggan     @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+  golonganTarif HblGolonganTarif @relation("HblSambunganGolongan", fields: [golonganTarifId], references: [id], onDelete: Restrict)
+  rute          HblRute?         @relation("HblRuteSambungan", fields: [ruteId], references: [id], onDelete: SetNull)
+
+  meter   HblMeter[]
+  baca    HblBaca[]
+  tagihan HblTagihan[]
+
+  // NEW back-rel
+  workOrders HblWorkOrder[]
+  keluhan    HblKeluhan[]
+  riwayatMeter HblMeterRiwayat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pelangganId])
+  @@index([ruteId])
+}
+
+model HblMeter {
+  id          Int     @id @default(autoincrement())
+  noSeri      String  @unique
+  sambunganId Int
+  tipe        String  @default("analog")
+  tahunPasang Int?
+  kondisi     String?
+  digitMaks   Int     @default(6)
+  segelNo     String?
+  fotoUrl     String?
+  aktif       Boolean @default(true)
+
+  sambungan HblSambungan @relation(fields: [sambunganId], references: [id], onDelete: Cascade)
+
+  // NEW back-rel
+  riwayat HblMeterRiwayat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sambunganId])
+}
+
+model HblRute {
+  id               Int       @id @default(autoincrement())
+  kode             String    @unique
+  nama             String
+  petugasId        Int?
+  kapasitasPerHari Int?
+  jadwalMulai      DateTime?
+  jadwalSelesai    DateTime?
+
+  petugas User? @relation("HblRutePetugas", fields: [petugasId], references: [id], onDelete: SetNull)
+
+  sambungan HblSambungan[] @relation("HblRuteSambungan")
+  bacaan    HblBaca[]      @relation("HblRuteBaca")
+
+  // NEW back-rel WO
+  workOrders HblWorkOrder[] @relation("HblRuteWorkOrder")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//* -------------------------------
+   //Operasional: Baca Meter, Billing, Pembayaran
+   //------------------------------- */
+model HblBaca {
+  id           Int           @id @default(autoincrement())
+  sambunganId  Int
+  ruteId       Int?
+  periodeTahun Int
+  periodeBulan Int
+
+  angkaLalu    Int           @default(0)
+  angkaKini    Int?
+  pakaiM3      Int?
+  status       HblStatusBaca @default(DRAFT)
+  anomali      Boolean?
+
+  catatan      String?
+  tanggalBaca  DateTime?
+
+  sambungan HblSambungan @relation(fields: [sambunganId], references: [id], onDelete: Cascade)
+  rute      HblRute?     @relation("HblRuteBaca", fields: [ruteId], references: [id], onDelete: SetNull)
+
+  // NEW back-rel
+  koreksi HblKoreksiBaca[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sambunganId, periodeTahun, periodeBulan])
+  @@index([ruteId])
+}
+
+model HblTagihan {
+  id             Int               @id @default(autoincrement())
+  noTagihan      String            @unique
+  pelangganId    Int
+  sambunganId    Int
+  periodeTahun   Int
+  periodeBulan   Int
+  pakaiM3        Int               @default(0)
+  jumlahAirRp    Decimal           @default(0) @db.Decimal(15, 2)
+  biayaAdminRp   Decimal           @default(0) @db.Decimal(15, 2)
+  dendaRp        Decimal           @default(0) @db.Decimal(15, 2)
+  pajakRp        Decimal           @default(0) @db.Decimal(15, 2)
+  totalRp        Decimal           @default(0) @db.Decimal(15, 2)
+  status         HblStatusTagihan  @default(DRAFT)
+  tanggalFinal   DateTime?
+  tanggalPosting DateTime?
+  postingRef     String?
+  tingkatTeguran HblTingkatTeguran @default(NONE)
+
+  // GL link opsional
+  jurnalId Int?
+  jurnal   JurnalUmum? @relation("JurnalHblTagihan", fields: [jurnalId], references: [id], onDelete: SetNull)
+
+  // NEW: snapshot tarif & print count
+  tarifSnapshotJson Json?
+  printCount        Int     @default(0)
+
+  pelanggan HblPelanggan @relation(fields: [pelangganId], references: [id], onDelete: Restrict)
+  sambungan HblSambungan @relation(fields: [sambunganId], references: [id], onDelete: Restrict)
+  item      HblTagihanItem[]
+  alokasi   HblPembayaranAlokasi[]
+  teguran   HblTeguran[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sambunganId, periodeTahun, periodeBulan])
+  @@index([pelangganId])
+  @@index([sambunganId])
+  @@index([status])
+}
+
+model HblTagihanItem {
+  id        Int     @id @default(autoincrement())
+  tagihanId Int
+  jenisItem String // WATER / ADMIN / TAX / PENALTY / OTHER
+  jumlahRp  Decimal @db.Decimal(15, 2)
+  catatan   String?
+
+  tagihan HblTagihan @relation(fields: [tagihanId], references: [id], onDelete: Cascade)
+
+  @@index([tagihanId])
+}
+
+model HblPembayaran {
+  id             Int            @id @default(autoincrement())
+  noKwitansi     String         @unique
+  metode         HblMetodeBayar
+  tanggalBayar   DateTime       @default(now())
+  jumlahTotalRp  Decimal        @db.Decimal(15, 2)
+  diterimaOlehId Int?
+  catatan        String?
+
+  // GL link opsional
+  jurnalId Int?
+  jurnal   JurnalUmum? @relation("JurnalHblPembayaran", fields: [jurnalId], references: [id], onDelete: SetNull)
+
+  diterimaOleh User?                  @relation("HblPembayaranPetugas", fields: [diterimaOlehId], references: [id], onDelete: SetNull)
+  alokasi      HblPembayaranAlokasi[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jurnalId])
+}
+
+model HblPembayaranAlokasi {
+  id             Int     @id @default(autoincrement())
+  pembayaranId   Int
+  tagihanId      Int
+  jumlahRp       Decimal @db.Decimal(15, 2)
+  alokasiPokokRp Decimal @default(0) @db.Decimal(15, 2)
+  alokasiDendaRp Decimal @default(0) @db.Decimal(15, 2)
+  alokasiAdminRp Decimal @default(0) @db.Decimal(15, 2)
+
+  pembayaran HblPembayaran @relation(fields: [pembayaranId], references: [id], onDelete: Cascade)
+  tagihan    HblTagihan    @relation(fields: [tagihanId], references: [id], onDelete: Cascade)
+
+  @@index([pembayaranId])
+  @@index([tagihanId])
+}
+
+//* -------------------------------
+   //Dunning (SP1, SP2, SP3, Putus)
+   //------------------------------- */
+model HblTeguran {
+  id        Int               @id @default(autoincrement())
+  tagihanId Int
+  level     HblTingkatTeguran
+  tanggal   DateTime          @default(now())
+  biayaRp   Decimal           @default(0) @db.Decimal(15, 2)
+  noSurat   String?
+  catatan   String?
+
+  tagihan HblTagihan @relation(fields: [tagihanId], references: [id], onDelete: Cascade)
+
+  @@index([tagihanId, level])
+}
+
+//* -------------------------------
+   //Mapping Akun & Antrian Jurnal (GL)
+   //------------------------------- */
+model HblPemetaanAkun {
+  id            Int                 @id @default(autoincrement())
+  tipe          HblTipePemetaanAkun
+  akunId        Int
+  segment       String?
+  aktif         Boolean             @default(true)
+  berlakuDari   DateTime?
+  berlakuSampai DateTime?
+
+  akun Akun @relation("HblPemetaanAkunRel", fields: [akunId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tipe, akunId, aktif])
+}
+
+model HblAntrianJurnal {
+  id             Int                    @id @default(autoincrement())
+  sumber         String                 @default("HUBLANG")
+  refType        HblRefType
+  refId          String
+  memo           String?
+  totalRp        Decimal                @default(0) @db.Decimal(15, 2)
+  status         HblStatusAntrianJurnal @default(NOT_POSTED)
+  postedAt       DateTime?
+  jurnalId       Int?
+  idempotencyKey String                 @unique
+
+  jurnal JurnalUmum?            @relation("JurnalHblAntrian", fields: [jurnalId], references: [id], onDelete: SetNull)
+  lines  HblAntrianJurnalLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([refType, refId])
+}
+
+model HblAntrianJurnalLine {
+  id        Int     @id @default(autoincrement())
+  antrianId Int
+  akunId    Int
+  debitRp   Decimal @default(0) @db.Decimal(15, 2)
+  kreditRp  Decimal @default(0) @db.Decimal(15, 2)
+  catatan   String?
+
+  antrian HblAntrianJurnal @relation(fields: [antrianId], references: [id], onDelete: Cascade)
+  akun    Akun             @relation("HblAntrianLineAkun", fields: [akunId], references: [id], onDelete: Restrict)
+
+  @@index([antrianId])
+  @@index([akunId])
+}
+
+//* -------------------------------
+   //NEW: Work Order, Keluhan, Meter Riwayat, Koreksi Bacaan
+   //------------------------------- */
+
+model HblWorkOrder {
+  id              Int      @id @default(autoincrement())
+  noWo            String
+  tanggalBuat     DateTime?
+  status          String
+  prioritas       String
+  jenis           String?
+  deskripsi       String?
+  targetTanggal   DateTime?
+  selesaiTanggal  DateTime?
+
+  biayaMaterialRp Decimal? @db.Decimal(18, 2)
+  biayaJasaRp     Decimal? @db.Decimal(18, 2)
+
+  jenisPekerjaan  JenisPekerjaanPemeliharaan?
+
+  pelangganId Int?
+  sambunganId Int?
+  ruteId      Int?
+  petugasId   Int?
+
+  pelanggan HblPelanggan? @relation(fields: [pelangganId], references: [id], onDelete: SetNull)
+  sambungan HblSambungan? @relation(fields: [sambunganId], references: [id], onDelete: SetNull)
+  rute      HblRute?      @relation("HblRuteWorkOrder", fields: [ruteId], references: [id], onDelete: SetNull)
+  petugas   User?         @relation("HblWorkOrderPetugas", fields: [petugasId], references: [id], onDelete: SetNull)
+
+  keluhan   HblKeluhan[]  @relation("HblWorkOrderKeluhan")
+
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+
+  @@index([pelangganId])
+  @@index([sambunganId])
+  @@index([ruteId])
+  @@index([petugasId])
+
+  @@map("hblworkorder")
+}
+
+
+
+
+model HblKeluhan {
+  id          Int             @id @default(autoincrement())
+  tanggal     DateTime        @default(now())
+  kanal       HblKanalKeluhan @default(WALKIN)
+  ringkas     String
+  detail      String?
+  lampiran    Json?
+  status      HblStatusKeluhan @default(OPEN)
+
+  pelangganId Int?
+  sambunganId Int?
+  workOrderId Int?
+
+  pelanggan HblPelanggan? @relation(fields: [pelangganId], references: [id], onDelete: SetNull)
+  sambungan HblSambungan? @relation(fields: [sambunganId], references: [id], onDelete: SetNull)
+  workOrder HblWorkOrder? @relation("HblWorkOrderKeluhan", fields: [workOrderId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pelangganId])
+  @@index([sambunganId])
+  @@index([workOrderId])
+  @@index([status, kanal])
+}
+
+
+model HblMeterRiwayat {
+  id           Int      @id @default(autoincrement())
+  sambunganId  Int
+  meterId      Int?
+  event        String   // PASANG / GANTI / CABUT / SERVIS / ...
+  tanggal      DateTime @default(now())
+  digitAwal    Int?
+  digitAkhir   Int?
+  catatan      String?
+  fotoUrl      String?
+
+  sambungan HblSambungan @relation(fields: [sambunganId], references: [id], onDelete: Cascade)
+  meter     HblMeter?    @relation(fields: [meterId], references: [id], onDelete: SetNull)
+
+  @@index([sambunganId])
+  @@index([meterId])
+  @@index([event, tanggal])
+}
+
+model HblKoreksiBaca {
+  id               Int      @id @default(autoincrement())
+  bacaId           Int
+  alasan           String?
+  angkaKiniSebelum Int?
+  angkaKiniSesudah Int?
+  pakaiSebelum     Int?
+  pakaiSesudah     Int?
+  createdById      Int?
+  createdAt        DateTime @default(now())
+
+  baca      HblBaca @relation(fields: [bacaId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("HblKoreksiBacaCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([bacaId])
+  @@index([createdById])
+  @@index([createdAt])
 }
