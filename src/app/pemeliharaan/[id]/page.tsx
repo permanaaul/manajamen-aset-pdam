@@ -1,441 +1,307 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import {
-  ArrowLeft,
-  BadgeCheck,
-  Barcode,
-  CalendarDays,
-  ClipboardList,
-  Coins,
-  Package,
-  Pencil,
-  PlusCircle,
-  ShieldCheck,
-  StickyNote,
-  Trash2,
-  UserCog,
-  Boxes,
-  Calculator,
-  Timer,
-} from "lucide-react";
+import { useParams } from "next/navigation";
+import { ChevronLeft, PackagePlus, Save, X, Filter as FilterIcon, RotateCcw } from "lucide-react";
+import useToast from "@/components/Toast";
 
-/* ================== Types ================== */
-type UserLocal = { nama: string; role: string } | null;
-
-type Strategi = "PREVENTIF" | "KOREKTIF" | "PREDIKTIF" | string;
-
-interface AsetLite {
-  nama: string;
-  nia: string;
-}
-
-interface SukuCadangRow {
-  nama: string;
-  qty: number | string;
-  satuan: string;
-  harga: number | string;
-}
-
-interface PemeliharaanDetail {
+type ItemRow = {
   id: number;
-  aset?: AsetLite | null;
-  tanggal: string;
-  jenis: string;
-  biaya?: number | string | null;
-  pelaksana: string;
+  item: { id: number; kode: string; nama: string; satuan: string | null };
+  qty: number;
+  hargaRp: number;
+  totalRp: number;
   catatan?: string | null;
-  status: "Terjadwal" | "Dalam Proses" | "Selesai" | string;
-
-  // opsional (kalau schema & API sudah diupgrade)
-  strategi?: Strategi | null;
-  jenisPekerjaan?: string | null; // enum code
-  downtimeJam?: number | string | null;
-  biayaMaterial?: number | string | null;
-  biayaJasa?: number | string | null;
-  sukuCadang?: SukuCadangRow[] | null;
-}
-
-/* ================== Helpers ================== */
-const num = (v: unknown): number => {
-  if (v === null || v === undefined || v === "") return 0;
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
+};
+type Head = {
+  id: number;
+  no: string;
+  tanggal: string | null;
+  jenis: string | null;
+  pelaksana: string | null;
+  status: string | null;
+  biaya: number | null;
+  catatan: string | null;
+  jenisPekerjaan?: string | null;
+  strategi?: string | null;
+  downtimeJam?: number | null;
+  aset?: { id: number; nia: string; nama: string; lokasi?: string | null } | null;
+  items: ItemRow[];
+  summary?: { totalQty: number; totalRp: number };
 };
 
-const toRupiah = (v?: number | string | null) =>
-  v == null || v === "" ? "-" : `Rp ${new Intl.NumberFormat("id-ID").format(num(v))}`;
+const fmtDateTime = (s: string | null) =>
+  s ? new Date(s).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : "-";
+const fmtNum = (n: number) => (Number.isFinite(n) ? n.toLocaleString("id-ID") : "0");
+const fmtRp  = (n: number) =>
+  (Number.isFinite(n) ? n : 0).toLocaleString("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 
-const StatusPill = ({ status }: { status: string }) => {
-  const base = "inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium";
-  switch (status) {
-    case "Selesai":
-      return (
-        <span className={`${base} bg-green-100 text-green-700`}>
-          <BadgeCheck className="w-4 h-4" /> Selesai
-        </span>
-      );
-    case "Dalam Proses":
-      return (
-        <span className={`${base} bg-amber-100 text-amber-700`}>
-          <ClipboardList className="w-4 h-4" /> Dalam Proses
-        </span>
-      );
-    default:
-      return (
-        <span className={`${base} bg-blue-100 text-blue-700`}>
-          <ShieldCheck className="w-4 h-4" /> Terjadwal
-        </span>
-      );
-  }
-};
+export default function PemeliharaanDetail() {
+  const params = useParams();
+  const id = Number((params as any)?.id);
+  const { View, push } = useToast();
 
-const labelJenisPekerjaan = (code?: string | null) => {
-  if (!code) return "-";
-  const MAP: Record<string, string> = {
-    INSPEKSI: "Inspeksi",
-    PELUMASAN: "Pelumasan",
-    KALIBRASI: "Kalibrasi",
-    GANTI_SPAREPART: "Ganti Sparepart",
-    PERBAIKAN_RINGAN: "Perbaikan Ringan",
-    PERBAIKAN_BESAR: "Perbaikan Besar",
-    OVERHAUL: "Overhaul",
-    TESTING: "Testing",
-  };
-  return MAP[code] ?? code.replace(/_/g, " ");
-};
+  const [data, setData] = React.useState<Head | null>(null);
+  const [loading, setLoading] = React.useState(true);
 
-const labelStrategi = (s?: string | null) => (s ? s.replace(/_/g, " ").toUpperCase() : "-");
+  // modal tambah item
+  const [modal, setModal] = React.useState<{ open: boolean; gudangId: string; saving: boolean; items: Array<{ item: any|null; qty: string; harga: string; catatan: string }>}>({
+    open: false, gudangId: "", saving: false, items: [{ item: null, qty: "", harga: "", catatan: "" }]
+  });
 
-/* ================== Page ================== */
-export default function DetailPemeliharaan() {
-  const router = useRouter();
-  const { id } = useParams<{ id: string }>();
-
-  const [user, setUser] = useState<UserLocal>(null);
-  const [item, setItem] = useState<PemeliharaanDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-
-  // guard login
-  useEffect(() => {
-    const raw = localStorage.getItem("user");
-    if (!raw) {
-      router.replace("/login");
-      return;
+  const load = React.useCallback(async ()=>{
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/pemeliharaan/${id}`, { cache: "no-store" });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d?.error || "Gagal memuat");
+      setData(d);
+    } catch (e:any) {
+      push(`❌ ${e.message}`, "err");
+    } finally {
+      setLoading(false);
     }
-    setUser(JSON.parse(raw));
-  }, [router]);
+  }, [id, push]);
 
-  // fetch detail
-  useEffect(() => {
-    if (!id) return;
-    (async () => {
-      try {
-        setLoading(true);
-        const res = await fetch(`/api/pemeliharaan/${id}`, { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Data tidak ditemukan");
-        setItem(data as PemeliharaanDetail);
-      } catch (e: any) {
-        setErr(e?.message || "Terjadi kesalahan koneksi ke server");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [id]);
+  React.useEffect(()=>{ if(id) load(); }, [id, load]);
 
-  // ❗ Semua hook di atas early return
-  const tanggalID = useMemo(
-    () =>
-      item?.tanggal
-        ? new Date(item.tanggal).toLocaleDateString("id-ID", {
-            weekday: "long",
-            day: "2-digit",
-            month: "long",
-            year: "numeric",
-          })
-        : "-",
-    [item?.tanggal]
-  );
+  // lookup item (autocomplete kecil)
+  const [qItem, setQItem] = React.useState("");
+  const [itemList, setItemList] = React.useState<Array<{id:number; kode:string; nama:string; satuan?: string|null}>>([]);
+  const searchItem = React.useCallback(async ()=>{
+    const sp = new URLSearchParams({ type: "item" });
+    if (qItem) sp.set("q", qItem);
+    const res = await fetch(`/api/gudang/lookup?${sp.toString()}`);
+    const d = await res.json();
+    const rows = (d.rows || []).map((r:any)=>({ id:r.id, kode:r.kode, nama:r.nama, satuan: r?.satuan?.simbol ?? r?.satuan ?? null }));
+    setItemList(rows);
+  }, [qItem]);
+  React.useEffect(()=>{ searchItem(); }, [searchItem]);
 
-  // ✅ Total suku cadang — diletakkan sebelum early return
-  const partsTotal = useMemo(() => {
-    if (!item?.sukuCadang || item.sukuCadang.length === 0) return 0;
-    return item.sukuCadang.reduce((acc, s) => acc + num(s.qty) * num(s.harga), 0);
-  }, [item?.sukuCadang]);
+  const addLine = () => setModal(s=>({ ...s, items: [...s.items, { item: null, qty: "", harga: "", catatan: "" }] }));
+  const delLine = (idx:number) => setModal(s=>({ ...s, items: s.items.filter((_,i)=>i!==idx) }));
 
-  // --- Early returns aman (tidak ada hook setelah ini) ---
-  if (loading || !user) {
-    return (
-      <main className="flex justify-center items-center min-h-screen">
-        <p className="text-slate-600">⏳ Memuat detail pemeliharaan…</p>
-      </main>
-    );
-  }
+  const submitItems = async () => {
+    if (!data) return;
+    const bodyItems = modal.items
+      .map((l)=>({
+        itemId: Number(l.item?.id || 0),
+        qty: Number(l.qty || 0),
+        hargaRp: l.harga ? Number(l.harga) : null,
+        catatan: l.catatan || null
+      }))
+      .filter((x)=> x.itemId>0 && x.qty>0);
 
-  if (err) {
-    return (
-      <main className="flex justify-center items-center min-h-screen">
-        <p className="text-red-600 font-semibold">{err}</p>
-      </main>
-    );
-  }
+    if (bodyItems.length===0) { push("Isi minimal satu baris item yang valid.", "err"); return; }
 
-  if (!item) {
-    return (
-      <main className="flex justify-center items-center min-h-screen">
-        <p className="text-red-600">❌ Data pemeliharaan tidak ditemukan</p>
-      </main>
-    );
-  }
-
-  const canEdit = ["ADMIN", "TEKNISI"].includes((user as any)?.role || "");
-
-  // subtotal & total (fallback header)
-  const subtotal = num(item.biayaMaterial) + num(item.biayaJasa);
-  const totalBiayaHeader = item.biaya != null && item.biaya !== "" ? num(item.biaya) : subtotal;
-
-  const hasDetailTeknis =
-    (item.strategi && item.strategi !== "") ||
-    (item.jenisPekerjaan && item.jenisPekerjaan !== "") ||
-    item.downtimeJam != null ||
-    item.biayaMaterial != null ||
-    item.biayaJasa != null ||
-    (item.sukuCadang && item.sukuCadang.length > 0);
+    setModal(s=>({ ...s, saving: true }));
+    try {
+      const res = await fetch(`/api/pemeliharaan/${data.id}/items`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ gudangId: modal.gudangId ? Number(modal.gudangId) : undefined, items: bodyItems })
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d?.error || "Gagal menambah item");
+      push("✅ Item ditambahkan & stok berkurang (ISSUE)", "ok");
+      setModal({ open:false, gudangId:"", saving:false, items:[{ item:null, qty:"", harga:"", catatan:"" }] });
+      await load();
+    } catch (e:any) {
+      push(`❌ ${e.message}`, "err");
+      setModal(s=>({ ...s, saving:false }));
+    }
+  };
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6 text-slate-900">
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header bar */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-emerald-700 flex items-center gap-2">
-            <ShieldCheck className="w-6 h-6" /> Detail Pemeliharaan
-          </h1>
-          <button
-            onClick={() => router.back()}
-            className="inline-flex items-center gap-2 text-blue-700 hover:underline text-sm"
-            title="Kembali"
-          >
-            <ArrowLeft className="w-4 h-4" /> Kembali
-          </button>
+    <div className="p-6 space-y-6 text-gray-900">
+      <View />
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-[26px] font-extrabold">Detail Pemeliharaan</h1>
+          <p className="text-[13px] text-gray-700">Rincian pekerjaan & konsumsi sparepart.</p>
         </div>
-
-        {/* ===== Card 1 — Ringkasan & Aset terkait ===== */}
-        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            {/* Info kiri */}
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-slate-500">Aset Terkait</div>
-              <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-                <div className="inline-flex items-center gap-2">
-                  <Package className="w-4 h-4 text-slate-500" />
-                  <span className="font-medium">{item.aset?.nama || "-"}</span>
-                </div>
-                <div className="inline-flex items-center gap-2">
-                  <Barcode className="w-4 h-4 text-slate-500" />
-                  <span className="font-mono">{item.aset?.nia || "-"}</span>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-4 text-sm mt-2">
-                <div className="inline-flex items-center gap-2">
-                  <CalendarDays className="w-4 h-4 text-slate-500" />
-                  <span className="font-medium">Tanggal:</span> {tanggalID}
-                </div>
-                <div className="inline-flex items-center gap-2">
-                  <Coins className="w-4 h-4 text-slate-500" />
-                  <span className="font-medium">Total Biaya:</span> {toRupiah(totalBiayaHeader)}
-                </div>
-                <div className="inline-flex items-center gap-2">
-                  <span className="font-medium">Status:</span>
-                  <StatusPill status={item.status} />
-                </div>
-              </div>
-            </div>
-
-            {/* Aksi cepat */}
-            <div className="flex flex-wrap gap-2">
-              {item.aset?.nia && (
-                <Link
-                  href={`/inventarisasi/${item.aset.nia}`}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded border hover:bg-slate-50 text-sm"
-                  title="Buka detail aset"
-                >
-                  <Package className="w-4 h-4" /> Lihat Aset
-                </Link>
-              )}
-              {item.aset?.nia && canEdit && (
-                <Link
-                  href={`/pemeliharaan/tambah?nia=${encodeURIComponent(item.aset.nia)}`}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded border hover:bg-slate-50 text-sm"
-                  title="Tambah pemeliharaan baru untuk aset ini"
-                >
-                  <PlusCircle className="w-4 h-4" /> Tambah Pemeliharaan
-                </Link>
-              )}
-              {canEdit && (
-                <>
-                  <Link
-                    href={`/pemeliharaan/${item.id}/edit`}
-                    className="inline-flex items-center gap-2 bg-amber-600 text-white px-3 py-2 rounded hover:bg-amber-700 text-sm"
-                  >
-                    <Pencil className="w-4 h-4" /> Edit
-                  </Link>
-                  <button
-                    onClick={async () => {
-                      if (!confirm("Yakin ingin menghapus jadwal ini?")) return;
-                      try {
-                        const res = await fetch(`/api/pemeliharaan/${item.id}`, { method: "DELETE" });
-                        const data = await res.json().catch(() => ({}));
-                        if (!res.ok) throw new Error(data?.error || "Gagal menghapus jadwal");
-                        alert("✅ Jadwal berhasil dihapus");
-                        router.push("/pemeliharaan");
-                      } catch (e: any) {
-                        alert(`❌ ${e?.message || "Terjadi kesalahan server"}`);
-                      }
-                    }}
-                    className="inline-flex items-center gap-2 bg-rose-600 text-white px-3 py-2 rounded hover:bg-rose-700 text-sm"
-                  >
-                    <Trash2 className="w-4 h-4" /> Hapus
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* ===== Card 2 — Detail Pemeliharaan ===== */}
-        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm">
-          <div className="px-5 py-4 border-b border-slate-100">
-            <h2 className="text-base font-semibold">Detail Pemeliharaan</h2>
-            <p className="text-xs text-slate-500 mt-1">Informasi utama & rincian teknis (jika diinput).</p>
-          </div>
-
-          <div className="p-5 space-y-8">
-            {/* Utama */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <ClipboardList className="text-slate-500 w-5 h-5" />
-                  <span className="font-medium text-slate-700">Jenis Kegiatan:</span>
-                </div>
-                <p className="pl-7">{item.jenis}</p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <UserCog className="text-slate-500 w-5 h-5" />
-                  <span className="font-medium text-slate-700">Pelaksana:</span>
-                </div>
-                <p className="pl-7">{item.pelaksana || "-"}</p>
-              </div>
-
-              <div className="space-y-3 md:col-span-2">
-                <div className="flex items-center gap-2">
-                  <StickyNote className="text-slate-500 w-5 h-5" />
-                  <span className="font-medium text-slate-700">Catatan:</span>
-                </div>
-                <p className="pl-7 whitespace-pre-wrap">{item.catatan || "-"}</p>
-              </div>
-            </div>
-
-            {/* Teknis (opsional) */}
-            {hasDetailTeknis ? (
-              <div className="space-y-4">
-                <h3 className="font-semibold text-slate-900">Detail Teknis</h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-500">Strategi</div>
-                    <div className="font-medium">{labelStrategi(item.strategi)}</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-500">Jenis Pekerjaan</div>
-                    <div className="font-medium">{labelJenisPekerjaan(item.jenisPekerjaan)}</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-500 inline-flex items-center gap-1">
-                      <Timer size={14} /> Downtime (jam)
-                    </div>
-                    <div className="font-medium">
-                      {item.downtimeJam != null && item.downtimeJam !== "" ? num(item.downtimeJam) : "-"}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-500">Biaya Material</div>
-                    <div className="font-medium">{toRupiah(item.biayaMaterial)}</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-500">Biaya Jasa</div>
-                    <div className="font-medium">{toRupiah(item.biayaJasa)}</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-500 inline-flex items-center gap-1">
-                      <Calculator size={14} /> Subtotal (Material + Jasa)
-                    </div>
-                    <div className="font-medium">{toRupiah(subtotal)}</div>
-                  </div>
-                </div>
-
-                {/* Suku cadang */}
-                {item.sukuCadang && item.sukuCadang.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold flex items-center gap-2">
-                      <Boxes size={16} /> Suku Cadang
-                    </div>
-                    <div className="overflow-auto rounded border border-slate-200">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-slate-50 text-slate-700">
-                          <tr>
-                            <th className="px-3 py-2 text-left">Nama</th>
-                            <th className="px-3 py-2 text-right">Qty</th>
-                            <th className="px-3 py-2 text-left">Satuan</th>
-                            <th className="px-3 py-2 text-right">Harga</th>
-                            <th className="px-3 py-2 text-right">Subtotal</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {item.sukuCadang.map((s, i) => {
-                            const sub = num(s.qty) * num(s.harga);
-                            return (
-                              <tr key={`${s.nama}-${i}`} className="border-t">
-                                <td className="px-3 py-2">{s.nama || "-"}</td>
-                                <td className="px-3 py-2 text-right">{s.qty ?? "-"}</td>
-                                <td className="px-3 py-2">{s.satuan || "-"}</td>
-                                <td className="px-3 py-2 text-right">{toRupiah(s.harga)}</td>
-                                <td className="px-3 py-2 text-right">{toRupiah(sub)}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                        <tfoot>
-                          <tr className="border-t bg-slate-50 font-semibold">
-                            <td className="px-3 py-2 text-right" colSpan={4}>
-                              Total Suku Cadang
-                            </td>
-                            <td className="px-3 py-2 text-right">{toRupiah(partsTotal)}</td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
-                Rincian teknis belum diisi. Jika diperlukan, klik <b>Edit</b> untuk menambahkan
-                strategi, jenis pekerjaan, downtime, biaya material/jasa, dan suku cadang.
-              </div>
-            )}
-          </div>
-        </section>
+        <Link href="/pemeliharaan" className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 hover:bg-gray-50">
+          <ChevronLeft className="h-4 w-4" /> Kembali
+        </Link>
       </div>
-    </main>
+
+      {loading && <div className="rounded-2xl border border-gray-200 bg-white p-6">Memuat…</div>}
+      {!loading && data && (
+        <>
+          {/* Ringkasan */}
+          <div className="grid gap-4 md:grid-cols-12">
+            <div className="md:col-span-7 rounded-2xl border border-gray-200 bg-white p-5">
+              <div className="text-sm font-bold uppercase text-gray-800 mb-2">Informasi</div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[14px]">
+                <div className="text-gray-600">No</div><div className="font-semibold">{data.no}</div>
+                <div className="text-gray-600">Tanggal</div><div className="font-semibold">{fmtDateTime(data.tanggal)}</div>
+                <div className="text-gray-600">Aset</div>
+                <div className="font-semibold">
+                  {data.aset ? (<><div>{data.aset.nia}</div><div className="text-xs text-gray-700">{data.aset.nama}</div></>) : "-"}
+                </div>
+                <div className="text-gray-600">Pelaksana</div><div className="font-semibold">{data.pelaksana || "-"}</div>
+                <div className="text-gray-600">Jenis</div><div className="font-semibold">{data.jenis || "-"}</div>
+                <div className="text-gray-600">Status</div><div className="font-semibold">{data.status || "-"}</div>
+                <div className="text-gray-600">Biaya</div><div className="font-semibold">{fmtRp(Number(data.biaya||0))}</div>
+                <div className="text-gray-600">Catatan</div><div className="font-semibold">{data.catatan || "-"}</div>
+              </div>
+            </div>
+            <div className="md:col-span-5 rounded-2xl border border-gray-200 bg-white p-5">
+              <div className="text-sm font-bold uppercase text-gray-800 mb-2">Ringkasan Sparepart</div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[14px]">
+                <div className="text-gray-600">Total Qty</div><div className="font-semibold">{fmtNum(data.summary?.totalQty || 0)}</div>
+                <div className="text-gray-600">Total Nilai</div><div className="font-semibold">{fmtRp(data.summary?.totalRp || 0)}</div>
+              </div>
+
+              <button
+                onClick={()=>setModal(s=>({ ...s, open: true }))}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 text-white px-3 py-2 font-semibold hover:bg-indigo-700"
+              >
+                <PackagePlus className="h-4 w-4" /> Tambah Item
+              </button>
+            </div>
+          </div>
+
+          {/* Items */}
+          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+            <table className="w-full text-[14px]">
+              <thead className="bg-gray-50">
+                <tr className="text-gray-800">
+                  <th className="px-3 py-2 text-left font-semibold">Item</th>
+                  <th className="px-3 py-2 text-right font-semibold">Qty</th>
+                  <th className="px-3 py-2 text-right font-semibold">HPP/Unit (Rp)</th>
+                  <th className="px-3 py-2 text-right font-semibold">Total (Rp)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.length===0 && (<tr><td colSpan={4} className="px-3 py-8 text-center">Belum ada item.</td></tr>)}
+                {data.items.map((r,i)=>(
+                  <tr key={r.id} className={`${i%2?"bg-gray-50/40":"bg-white"} border-t`}>
+                    <td className="px-3 py-2">
+                      <div className="font-semibold">{r.item.kode}</div>
+                      <div className="text-xs text-gray-700">{r.item.nama}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right">{fmtNum(r.qty)}{r.item.satuan? ` ${r.item.satuan}`:""}</td>
+                    <td className="px-3 py-2 text-right">{fmtRp(r.hargaRp)}</td>
+                    <td className="px-3 py-2 text-right font-semibold">{fmtRp(r.totalRp)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* MODAL Tambah Item */}
+      {modal.open && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-[820px] max-w-[95vw] border border-gray-200">
+            <div className="px-5 py-4 border-b flex items-center justify-between">
+              <div className="text-lg font-bold">Tambah Item (Issue Stok)</div>
+              <button onClick={()=>setModal(s=>({ ...s, open:false }))} className="w-8 h-8 rounded-lg border border-gray-300 hover:bg-gray-50 inline-flex items-center justify-center">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-3 gap-3 items-end">
+                <label className="block col-span-2">
+                  <div className="mb-1 text-sm font-semibold">Cari Item</div>
+                  <div className="flex gap-2">
+                    <input value={qItem} onChange={(e)=>setQItem(e.target.value)} placeholder="Ketik kode/nama item…"
+                      className="h-11 w-full rounded-xl border border-gray-300 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    <button onClick={searchItem} className="h-11 inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 hover:bg-gray-50">
+                      <FilterIcon className="h-4 w-4"/> Cari
+                    </button>
+                    <button onClick={()=>setQItem("")} className="h-11 inline-flex items-center gap-2 rounded-xl border border-gray-300 px-3 hover:bg-gray-50">
+                      <RotateCcw className="h-4 w-4"/> Reset
+                    </button>
+                  </div>
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-sm font-semibold">Gudang ID</div>
+                  <input type="number" min={1} value={modal.gudangId} onChange={(e)=>setModal(s=>({ ...s, gudangId: e.target.value }))}
+                    placeholder="contoh: 3"
+                    className="h-11 w-full rounded-xl border border-gray-300 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </label>
+              </div>
+
+              {/* daftar item hasil cari */}
+              <div className="rounded-xl border max-h-48 overflow-auto">
+                {itemList.map(it=>(
+                  <button key={it.id} onClick={()=>{
+                    setModal(s=>{
+                      const arr = [...s.items];
+                      // cari slot kosong pertama:
+                      const idx = arr.findIndex(x=>!x.item);
+                      if (idx>=0) arr[idx].item = it;
+                      else arr.push({ item: it, qty: "", harga: "", catatan: "" });
+                      return { ...s, items: arr };
+                    });
+                  }} className="w-full px-3 py-2 text-left hover:bg-indigo-50">
+                    <div className="font-semibold">{it.kode}</div>
+                    <div className="text-xs text-gray-700">{it.nama}{it.satuan? ` • ${it.satuan}`:""}</div>
+                  </button>
+                ))}
+                {itemList.length===0 && <div className="px-3 py-4 text-sm text-gray-600">Tidak ada data.</div>}
+              </div>
+
+              {/* form lines */}
+              <div className="rounded-xl border overflow-auto">
+                <table className="w-full text-[14px]">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Item</th>
+                      <th className="px-3 py-2 text-right w-28">Qty</th>
+                      <th className="px-3 py-2 text-right w-36">HPP (ops)</th>
+                      <th className="px-3 py-2 text-left">Catatan</th>
+                      <th className="px-3 py-2 w-16"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modal.items.map((l, idx)=>(
+                      <tr key={idx} className="border-t">
+                        <td className="px-3 py-2">
+                          {l.item ? (
+                            <>
+                              <div className="font-semibold">{l.item.kode}</div>
+                              <div className="text-xs text-gray-700">{l.item.nama}</div>
+                            </>
+                          ) : <span className="text-gray-500">— pilih dari daftar di atas —</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input value={l.qty} onChange={(e)=>setModal(s=>{ const a=[...s.items]; a[idx]={...a[idx], qty:e.target.value}; return {...s, items:a}; })}
+                            type="number" className="h-9 w-full rounded-lg border border-gray-300 text-right px-2"/>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input value={l.harga} onChange={(e)=>setModal(s=>{ const a=[...s.items]; a[idx]={...a[idx], harga:e.target.value}; return {...s, items:a}; })}
+                            type="number" className="h-9 w-full rounded-lg border border-gray-300 text-right px-2" placeholder="opsional"/>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input value={l.catatan} onChange={(e)=>setModal(s=>{ const a=[...s.items]; a[idx]={...a[idx], catatan:e.target.value}; return {...s, items:a}; })}
+                            className="h-9 w-full rounded-lg border border-gray-300 px-2" placeholder="opsional"/>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button onClick={()=>delLine(idx)} className="rounded-lg border px-2 py-1 hover:bg-gray-50">Hapus</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button onClick={addLine} className="rounded-lg border px-3 py-2 hover:bg-gray-50">Tambah Baris</button>
+                <button onClick={submitItems} disabled={modal.saving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 text-white px-3 py-2 font-semibold hover:bg-indigo-700 disabled:opacity-60">
+                  <Save className="h-4 w-4" /> {modal.saving? "Memproses…":"Simpan & Issue Stok"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,3 +1,7 @@
+// ==============================
+// prisma/schema.prisma — Manajemen Aset + Gudang (overhaul)
+// ==============================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,6 +11,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+//* ====== Enums: User & Aset ====== */
 enum Role {
   ADMIN
   PETUGAS
@@ -27,7 +32,7 @@ enum KategoriAset {
   TANAH
 }
 
-//* ===== Penyusutan ===== */
+//* ====== Penyusutan ====== */
 enum MetodePenyusutan {
   GARIS_LURUS
   SALDO_MENURUN
@@ -42,7 +47,12 @@ enum GolonganDepresiasi {
   BANGUNAN_NON_PERMANEN
 }
 
-//* ===== Pemeliharaan (sesuai PDAM) ===== */
+enum BasisPenyusutan {
+  TAHUNAN
+  BULANAN
+}
+
+//* ====== Pemeliharaan (PDAM) ====== */
 enum JenisPekerjaanPemeliharaan {
   INSPEKSI
   PELUMASAN
@@ -60,6 +70,33 @@ enum StrategiPerlakuan {
   PREDIKTIF
 }
 
+//* ====== Inventory/Gudang ====== */
+// NOTE: enum Satuan DIHAPUS. Kita pindah ke tabel ItemSatuan agar CRUD bisa dilakukan.
+
+enum JenisItem {
+  SPAREPART
+  MATERIAL
+  BHP
+  JASA
+  LAINNYA
+}
+
+enum TipeStokTransaksi {
+  RECEIPT
+  ISSUE
+  TRANSFER
+  ADJUSTMENT
+  RETURN
+}
+
+enum StatusDokumen {
+  DRAFT
+  POSTED
+  CANCELED
+}
+
+//* ====== Models ====== */
+
 model User {
   id        Int      @id @default(autoincrement())
   nama      String
@@ -68,23 +105,28 @@ model User {
   role      Role     @default(PETUGAS)
   hp        String?
   createdAt DateTime @default(now())
+
+  stokTransaksiDibuat StokTransaksi[] @relation("StokTransaksiCreatedBy")
 }
 
+//* ------------ Aset ------------ */
 model Aset {
-  id           Int            @id @default(autoincrement())
-  nia          String         @unique
-  nama         String
-  kategori     KategoriAset
-  lokasi       String
-  tahun        Int
-  nilai        Decimal        @db.Decimal(15, 2)
-  kondisi      String
-  catatan      String?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  pemeliharaan Pemeliharaan[]
+  id        Int          @id @default(autoincrement())
+  nia       String       @unique
+  nama      String
+  kategori  KategoriAset
+  lokasi    String
+  tahun     Int
+  nilai     Decimal      @db.Decimal(15, 2)
+  kondisi   String
+  catatan   String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
-  //* ===== Field penyusutan ===== */
+  pemeliharaan Pemeliharaan[]
+  stokLines    StokTransaksiLine[]
+
+  // ===== Penyusutan (existing) =====
   tanggalOperasi     DateTime?
   umurManfaatTahun   Int?
   nilaiResidu        Decimal?            @db.Decimal(15, 2)
@@ -92,46 +134,205 @@ model Aset {
   golonganDepresiasi GolonganDepresiasi?
   mulaiPenyusutan    DateTime?
   penyusutan         Penyusutan[]
+
+  // ===== Kebijakan penyusutan (BARU) =====
+  basisPenyusutan   BasisPenyusutan @default(TAHUNAN)     // tahunan/bulanan
+  gunakanTarifCustom Boolean         @default(false)       // jika true, pakai tarifCustom
+  tarifCustom        Decimal?        @db.Decimal(6, 3)     // persen, contoh 12.500 = 12.5%
+
+  @@index([kategori])
+  @@index([tahun])
+  // opsional: cepat query berdasarkan mulai penyusutan
+  @@index([mulaiPenyusutan])
 }
 
-model Pemeliharaan {
-  id            Int                           @id @default(autoincrement())
-  asetId        Int
-  tanggal       DateTime
-  jenis         String
-  biaya         Decimal?                      @db.Decimal(15, 2) // legacy total (auto-diisi)
-  pelaksana     String
-  catatan       String?
-  status        String
-  createdAt     DateTime                      @default(now())
 
-  //* ===== Detail PDAM (opsional) ===== */
+model Penyusutan {
+  id         Int               @id @default(autoincrement())
+  asetId     Int
+  periode    DateTime
+  metode     MetodePenyusutan
+  basis      BasisPenyusutan   @default(TAHUNAN)          // <— BARU: arsipkan basis yang dipakai
+  tarif      Decimal           @db.Decimal(6, 3)
+  nilaiAwal  Decimal           @db.Decimal(15, 2)
+  beban      Decimal           @db.Decimal(15, 2)
+  akumulasi  Decimal           @db.Decimal(15, 2)
+  nilaiAkhir Decimal           @db.Decimal(15, 2)
+  dibuatPada DateTime          @default(now())
+
+  aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
+
+  @@unique([asetId, periode])
+  @@index([periode])
+  @@index([asetId, periode])
+}
+
+
+//* ------------ Pemeliharaan ------------ */
+model Pemeliharaan {
+  id        Int      @id @default(autoincrement())
+  asetId    Int
+  tanggal   DateTime
+  jenis     String
+  biaya     Decimal? @db.Decimal(15, 2)
+  pelaksana String
+  catatan   String?
+  status    String
+  createdAt DateTime @default(now())
+
   jenisPekerjaan JenisPekerjaanPemeliharaan?
   strategi       StrategiPerlakuan?
-  downtimeJam    Decimal?                     @db.Decimal(10, 2)
-  sukuCadang     Json?
-  biayaMaterial  Decimal?                     @db.Decimal(15, 2)
-  biayaJasa      Decimal?                     @db.Decimal(15, 2)
+  downtimeJam    Decimal?                    @db.Decimal(10, 2)
+
+  items     PemeliharaanItem[]
+  stokLines StokTransaksiLine[]
 
   aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
 
   @@index([asetId, tanggal])
 }
 
-model Penyusutan {
-  id         Int                @id @default(autoincrement())
-  asetId     Int
-  periode    DateTime
-  metode     MetodePenyusutan
-  tarif      Decimal            @db.Decimal(6, 3)
-  nilaiAwal  Decimal            @db.Decimal(15, 2)
-  beban      Decimal            @db.Decimal(15, 2)
-  akumulasi  Decimal            @db.Decimal(15, 2)
-  nilaiAkhir Decimal            @db.Decimal(15, 2)
-  dibuatPada DateTime           @default(now())
+model PemeliharaanItem {
+  id             Int      @id @default(autoincrement())
+  pemeliharaanId Int
+  itemId         Int
+  qty            Decimal  @db.Decimal(18, 3)
+  hargaRp        Decimal? @db.Decimal(18, 2)
+  stokLineId     Int?
 
-  aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
+  pemeliharaan Pemeliharaan @relation(fields: [pemeliharaanId], references: [id], onDelete: Cascade)
+  item         Item         @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  stokLine     StokTransaksiLine? @relation(fields: [stokLineId], references: [id], onDelete: SetNull)
 
-  @@unique([asetId, periode])
-  @@index([periode])
+  @@index([pemeliharaanId])
+  @@index([itemId])
+}
+
+//* ------------ Gudang / Inventory ------------ */
+
+model Gudang {
+  id     Int     @id @default(autoincrement())
+  kode   String  @unique
+  nama   String
+  lokasi String?
+  tipe   String?
+  aktif  Boolean @default(true)
+
+  stok            StokSaldo[]
+  transaksiAsal   StokTransaksi[] @relation("GudangAsal")
+  transaksiTujuan StokTransaksi[] @relation("GudangTujuan")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//* === Master Satuan (BARU) === */
+model ItemSatuan {
+  id        Int      @id @default(autoincrement())
+  nama      String   @unique
+  simbol    String?  @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items Item[]
+}
+
+model Item {
+  id       Int       @id @default(autoincrement())
+  kode     String    @unique
+  nama     String
+  jenis    JenisItem @default(SPAREPART)
+
+  // WAS: satuan Satuan @default(PCS)
+  // NOW:
+  satuanId Int?
+  satuan   ItemSatuan? @relation(fields: [satuanId], references: [id], onDelete: SetNull)
+
+  minQty   Int?
+  isActive Boolean   @default(true)
+
+  stok              StokSaldo[]
+  lines             StokTransaksiLine[]
+  pemeliharaanItems PemeliharaanItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StokSaldo {
+  id          Int      @id @default(autoincrement())
+  gudangId    Int
+  itemId      Int
+
+  // Dulu Decimal, sekarang Int
+  qty         Int      @default(0)
+  reservedQty Int      @default(0)
+
+  lastMoveAt  DateTime?
+
+  gudang Gudang @relation(fields: [gudangId], references: [id], onDelete: Cascade)
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([gudangId, itemId])
+  @@index([itemId])
+  @@index([gudangId])
+}
+
+model StokTransaksi {
+  id      Int               @id @default(autoincrement())
+  nomor   String            @unique
+  tanggal DateTime          @default(now())
+  tipe    TipeStokTransaksi
+  status  StatusDokumen     @default(DRAFT)
+
+  gudangAsalId   Int?
+  gudangTujuanId Int?
+  referensi      String?
+  catatan        String?
+
+  createdById Int?
+  postedAt    DateTime?
+
+  createdBy    User?   @relation("StokTransaksiCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  gudangAsal   Gudang? @relation("GudangAsal", fields: [gudangAsalId], references: [id], onDelete: SetNull)
+  gudangTujuan Gudang? @relation("GudangTujuan", fields: [gudangTujuanId], references: [id], onDelete: SetNull)
+
+  lines StokTransaksiLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tanggal])
+  @@index([tipe, status])
+}
+
+model StokTransaksiLine {
+  id             Int      @id @default(autoincrement())
+  headerId       Int
+  itemId         Int
+  qty            Decimal  @db.Decimal(18, 3)
+  hargaRp        Decimal? @db.Decimal(18, 2)
+  asetId         Int?
+  pemeliharaanId Int?
+  catatan        String?
+
+  header StokTransaksi @relation(fields: [headerId], references: [id], onDelete: Cascade)
+  item   Item          @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  aset   Aset?         @relation(fields: [asetId], references: [id], onDelete: SetNull)
+  pemeliharaan Pemeliharaan? @relation(fields: [pemeliharaanId], references: [id], onDelete: SetNull)
+
+  pemeliharaanItems PemeliharaanItem[]
+
+  @@index([headerId])
+  @@index([itemId])
+  @@index([pemeliharaanId])
+  @@index([asetId])
+}
+
+//* ------------ Util: Penomoran ------------ */
+model SequenceCounter {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value Int    @default(0)
 }

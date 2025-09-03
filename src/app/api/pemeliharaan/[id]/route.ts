@@ -1,120 +1,138 @@
-import { NextResponse } from "next/server";
+// app/api/pemeliharaan/[id]/route.ts
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma, JenisPekerjaanPemeliharaan, StrategiPerlakuan } from "@prisma/client";
 
-type Params = { params: { id: string } };
+/** Helper angka → number aman */
+const toNum = (v: unknown) => (v == null ? 0 : Number(v) || 0);
 
-function normalizeEnum<T extends string>(raw: any, allowed: readonly T[]): T | undefined {
-  if (typeof raw !== "string" || !raw) return undefined;
-  const norm = raw.trim().toUpperCase().replace(/\s+/g, "_");
-  return (allowed as readonly string[]).includes(norm) ? (norm as T) : undefined;
-}
-const D = (v: any) =>
-  v === null || v === undefined || v === ""
-    ? undefined
-    : new Prisma.Decimal(String(v));
+/** Tipe minimal untuk baris item pemeliharaan dari SELECT */
+type QItem = {
+  id: number;
+  qty: unknown;        // DECIMAL/string/number → akan dinormalisasi
+  hargaRp: unknown;    // idem
+  item: {
+    id: number;
+    kode: string;
+    nama: string;
+    satuan?: { simbol: string | null; nama: string | null } | null; // relasi ItemSatuan (opsional)
+  };
+};
 
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   try {
-    // @ts-ignore
-    const pemeliharaan = await prisma.pemeliharaan.findUnique({
-      where: { id: Number(params.id) },
-      include: { aset: { select: { id: true, nia: true, nama: true } } },
+    const id = Number(params.id);
+    if (!id) return NextResponse.json({ error: "invalid id" }, { status: 400 });
+    //@ts-ignore
+    const row = await prisma.pemeliharaan.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        asetId: true,
+        tanggal: true,
+        jenis: true,
+        pelaksana: true,
+        status: true,
+        biaya: true,
+        catatan: true,
+        jenisPekerjaan: true,
+        strategi: true,
+        downtimeJam: true,
+        aset: { select: { id: true, nia: true, nama: true, lokasi: true } },
+        items: {
+          select: {
+            id: true,
+            qty: true,
+            hargaRp: true,
+            item: {
+              select: {
+                id: true,
+                kode: true,
+                nama: true,
+                // Ambil simbol/nama dari master satuan (kalau ada)
+                satuan: { select: { simbol: true, nama: true } },
+              },
+            },
+          },
+          orderBy: { id: "asc" },
+        },
+      },
     });
-    if (!pemeliharaan)
-      return NextResponse.json({ error: "Data tidak ditemukan" }, { status: 404 });
-    return NextResponse.json(pemeliharaan);
-  } catch (error) {
-    console.error("Error GET detail pemeliharaan:", error);
-    return NextResponse.json({ error: "Gagal mengambil detail pemeliharaan" }, { status: 500 });
+    if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+    // Normalisasi items → angka number & satuan string
+    const items = (row.items as QItem[]).map((it: QItem) => {
+      const qty = toNum(it.qty);
+      const harga = toNum(it.hargaRp);
+      const satuanStr =
+        it.item?.satuan?.simbol ??
+        it.item?.satuan?.nama ??
+        null;
+
+      return {
+        id: it.id,
+        item: {
+          id: it.item.id,
+          kode: it.item.kode,
+          nama: it.item.nama,
+          satuan: satuanStr, // string | null
+        },
+        qty,
+        hargaRp: harga,
+        totalRp: qty * harga,
+      };
+    });
+
+    const totalQty = items.reduce((s: number, r: { qty: number }) => s + r.qty, 0);
+    const totalRp  = items.reduce((s: number, r: { totalRp: number }) => s + r.totalRp, 0);
+
+    return NextResponse.json({
+      id: row.id,
+      no: `PM-${String(row.id).padStart(5, "0")}`,
+      tanggal: row.tanggal ? row.tanggal.toISOString() : null,
+      jenis: row.jenis,
+      pelaksana: row.pelaksana,
+      status: row.status,
+      biaya: toNum(row.biaya),
+      catatan: row.catatan ?? null,
+      jenisPekerjaan: row.jenisPekerjaan ?? null,
+      strategi: row.strategi ?? null,
+      downtimeJam: row.downtimeJam != null ? Number(row.downtimeJam) : null,
+      aset: row.aset
+        ? { id: row.aset.id, nia: row.aset.nia, nama: row.aset.nama, lokasi: row.aset.lokasi }
+        : null,
+      items,
+      summary: { totalQty, totalRp },
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
   }
 }
 
-export async function PUT(req: Request, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const body = await req.json();
+    const id = Number(params.id);
+    if (!id) return NextResponse.json({ error: "invalid id" }, { status: 400 });
 
-    const {
-      asetId,
-      tanggal,
-      jenis,
-      biaya,
-      pelaksana,
-      catatan,
-      status,
-
-      // detail teknis (opsional)
-      jenisPekerjaan,
-      strategi,
-      downtimeJam,
-      biayaMaterial,
-      biayaJasa,
-      sukuCadang,
-    } = body ?? {};
-
-    if (!asetId || !tanggal || !jenis || !pelaksana || !status) {
-      return NextResponse.json({ error: "Semua field wajib diisi" }, { status: 400 });
-    }
-
-    // pastikan aset ada
-    // @ts-ignore
-    const aset = await prisma.aset.findUnique({ where: { id: Number(asetId) } });
-    if (!aset) return NextResponse.json({ error: "Aset tidak ditemukan" }, { status: 404 });
-
-    const jenisPek = normalizeEnum<JenisPekerjaanPemeliharaan>(
-      jenisPekerjaan,
-      Object.values(JenisPekerjaanPemeliharaan)
-    );
-    const strategiOK = normalizeEnum<StrategiPerlakuan>(
-      strategi,
-      Object.values(StrategiPerlakuan)
-    );
-
-    // susun data update — hanya set field jika ada nilai (biar tidak “Invalid value”)
-    const dataUpdate: Prisma.PemeliharaanUpdateInput = {
-      aset: { connect: { id: Number(asetId) } },
-      tanggal: new Date(tanggal),
-      jenis: String(jenis).trim(),
-      pelaksana: String(pelaksana).trim(),
-      status: String(status),
-      catatan: catatan === undefined ? undefined : (catatan ? String(catatan).trim() : null),
-
-      biaya: biaya === undefined ? undefined : D(biaya),
-
-      jenisPekerjaan: jenisPekerjaan === undefined ? undefined : (jenisPek ?? null),
-      strategi: strategi === undefined ? undefined : (strategiOK ?? null),
-      downtimeJam: downtimeJam === undefined ? undefined : D(downtimeJam),
-      biayaMaterial: biayaMaterial === undefined ? undefined : D(biayaMaterial),
-      biayaJasa: biayaJasa === undefined ? undefined : D(biayaJasa),
-      sukuCadang:
-        sukuCadang === undefined
-          ? undefined
-          : sukuCadang && (Array.isArray(sukuCadang) || typeof sukuCadang === "object")
-          ? sukuCadang
-          : null,
-    };
-
-    // @ts-ignore
+    const b = await req.json();
+    //@ts-ignore
     const updated = await prisma.pemeliharaan.update({
-      where: { id: Number(params.id) },
-      data: dataUpdate,
-      include: { aset: { select: { id: true, nia: true, nama: true } } },
+      where: { id },
+      data: {
+        tanggal: b?.tanggal ? new Date(b.tanggal) : undefined,
+        jenis: b?.jenis,
+        pelaksana: b?.pelaksana,
+        status: b?.status,
+        biaya: b?.biaya != null ? Number(b.biaya) : undefined,
+        catatan: b?.catatan,
+        jenisPekerjaan: b?.jenisPekerjaan ?? undefined,
+        strategi: b?.strategi ?? undefined,
+        downtimeJam: b?.downtimeJam != null ? Number(b.downtimeJam) : undefined,
+      },
+      select: { id: true },
     });
 
-    return NextResponse.json(updated);
-  } catch (error: any) {
-    console.error("Error PUT pemeliharaan:", error);
-    return NextResponse.json({ error: "Gagal update pemeliharaan" }, { status: 500 });
-  }
-}
-
-export async function DELETE(_req: Request, { params }: Params) {
-  try {
-    // @ts-ignore
-    await prisma.pemeliharaan.delete({ where: { id: Number(params.id) } });
-    return NextResponse.json({ message: "Data berhasil dihapus" });
-  } catch (error) {
-    console.error("Error DELETE pemeliharaan:", error);
-    return NextResponse.json({ error: "Gagal menghapus pemeliharaan" }, { status: 500 });
+    return NextResponse.json({ id: updated.id, ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
   }
 }

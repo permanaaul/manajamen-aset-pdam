@@ -2,58 +2,113 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Cookies from "js-cookie";
 import {
   Home,
+  Boxes,
   Package,
-  Settings,
   ClipboardList,
+  Calculator,
   BarChart3,
+  ChevronDown,
+  ChevronRight,
   LogOut,
   User,
 } from "lucide-react";
 
+/** ====== Types ====== */
+type Role = "ADMIN" | "PETUGAS" | "TEKNISI" | "PIMPINAN";
+
+type NavItem = {
+  name: string;
+  path: string;
+  icon: ReactNode;
+  roles: Role[];
+};
+
+type NavGroup = {
+  key: string;
+  title: string;
+  icon: ReactNode;
+  items: NavItem[];
+};
+
+/** ====== Helpers ====== */
+const cx = (...cls: Array<string | false | null | undefined>) =>
+  cls.filter(Boolean).join(" ");
+
+const canSee = (role: Role, item: { roles: Role[] }) => item.roles.includes(role);
+
 export default function Sidebar() {
   const pathname = usePathname();
-  const [user, setUser] = useState<{ nama: string; role: string } | null>(null);
+  const [user, setUser] = useState<{ nama: string; role: Role } | null>(null);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
+    try {
+      const s = localStorage.getItem("user");
+      if (s) setUser(JSON.parse(s));
+    } catch {}
   }, []);
 
-  if (!user) return null;
+  // Fallback supaya sidebar tampil walau belum login
+  const effectiveRole: Role = (user?.role as Role) ?? "ADMIN";
+  const displayName = user?.nama ?? "Tamu";
 
-  const menus = [
-    { name: "Dashboard", path: "/dashboard", icon: <Home size={18} />, roles: ["ADMIN"] },
-    {
-      name: "Inventarisasi",
-      path: "/inventarisasi",
-      icon: <Package size={18} />,
-      roles: ["ADMIN", "PETUGAS"],
-    },
-    {
-      name: "Pemeliharaan",
-      path: "/pemeliharaan",
-      icon: <ClipboardList size={18} />,
-      roles: ["ADMIN", "TEKNISI"],
-    },
-    {
-      name: "Laporan",
-      path: "/laporan",
-      icon: <BarChart3 size={18} />,
-      roles: ["ADMIN", "PIMPINAN"],
-    },
-    {
-      name: "Profil",
-      path: "/profil",
-      icon: <User size={18} />,
-      roles: ["ADMIN", "PETUGAS", "TEKNISI", "PIMPINAN"],
-    },
-  ];
+  /** ====== Single item (Dashboard saja) ====== */
+  const topNav: NavItem[] = useMemo(
+    () => [
+      {
+        name: "Dashboard",
+        path: "/dashboard",
+        icon: <Home size={16} />,
+        roles: ["ADMIN", "PETUGAS", "TEKNISI", "PIMPINAN"],
+      },
+    ],
+    []
+  );
+
+  /** ====== Dropdown groups ====== */
+  const groups: NavGroup[] = useMemo(
+    () => [
+      {
+        key: "aset",
+        title: "Manajemen Aset",
+        icon: <Package size={18} />,
+        items: [
+          // GUDANG digabung: 1 menu, nanti tab di dalam halaman /gudang
+          { name: "Gudang", path: "/gudang", icon: <Boxes size={16} />, roles: ["ADMIN", "PETUGAS"] },
+          { name: "Aset", path: "/aset", icon: <Package size={16} />, roles: ["ADMIN", "PETUGAS"] },
+          { name: "Pemeliharaan", path: "/pemeliharaan", icon: <ClipboardList size={16} />, roles: ["ADMIN", "TEKNISI"] },
+          { name: "Penyusutan", path: "/penyusutan", icon: <Calculator size={16} />, roles: ["ADMIN", "PIMPINAN"] },
+          // LAPORAN dipindah ke dalam Manajemen Aset
+          { name: "Laporan", path: "/laporan", icon: <BarChart3 size={16} />, roles: ["ADMIN", "PIMPINAN"] },
+        ],
+      },
+      {
+        key: "akun",
+        title: "Akun",
+        icon: <User size={18} />,
+        items: [
+          { name: "Profil", path: "/profil", icon: <User size={16} />, roles: ["ADMIN", "PETUGAS", "TEKNISI", "PIMPINAN"] },
+        ],
+      },
+    ],
+    []
+  );
+
+  // Auto-expand group yang punya route aktif
+  useEffect(() => {
+    setOpen((prev) => {
+      const next = { ...prev };
+      for (const g of groups) {
+        next[g.key] = prev[g.key] ?? g.items.some((it) => pathname.startsWith(it.path));
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   const handleLogout = () => {
     Cookies.remove("token");
@@ -63,44 +118,99 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="w-64 bg-blue-800 text-white min-h-screen flex flex-col p-6 shadow-lg">
-      {/* Header */}
-      <div className="mb-8 border-b border-blue-600 pb-4">
-        <h2 className="text-2xl font-bold tracking-tight">🔧 PDAM Aset</h2>
-        <p className="mt-1 text-sm text-blue-100">
-          👤 {user.nama} <br />
-          🔑 {user.role}
-        </p>
+    <aside className="w-72 bg-slate-900 text-slate-100 min-h-screen flex flex-col shadow-xl">
+      {/* Brand / User */}
+      <div className="px-5 pt-6 pb-4 border-b border-slate-800">
+        <div className="flex items-center gap-2">
+          <div className="h-9 w-9 grid place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-blue-500 shadow-sm">🔧</div>
+          <div>
+            <h1 className="text-lg font-semibold leading-tight">PDAM • Aset</h1>
+            <p className="text-xs text-slate-400">{displayName} · {effectiveRole}</p>
+          </div>
+        </div>
       </div>
 
-      {/* Menu */}
-      <nav className="flex flex-col gap-1">
-        {menus
-          .filter((menu) => menu.roles.includes(user.role))
-          .map((menu) => (
-            <Link
-              key={menu.path}
-              href={menu.path}
-              className={`flex items-center gap-3 px-4 py-2 rounded-lg transition font-medium ${
-                pathname === menu.path
-                  ? "bg-blue-600 text-white shadow"
-                  : "hover:bg-blue-700 text-blue-100"
-              }`}
-            >
-              {menu.icon}
-              <span>{menu.name}</span>
-            </Link>
-          ))}
+      {/* Navigation */}
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-2">
+        {/* Single items (Dashboard) */}
+        <div className="space-y-1">
+          {topNav
+            .filter((it) => canSee(effectiveRole, it))
+            .map((it) => {
+              const active = pathname === it.path;
+              return (
+                <Link
+                  key={it.path}
+                  href={it.path}
+                  className={cx(
+                    "flex items-center gap-3 px-4 py-2 rounded-lg transition font-medium",
+                    active ? "bg-indigo-600 text-white shadow" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                  )}
+                >
+                  <span className={cx("shrink-0", active ? "text-white" : "text-slate-400")}>{it.icon}</span>
+                  <span>{it.name}</span>
+                </Link>
+              );
+            })}
+        </div>
+
+        {/* Groups */}
+        {groups.map((group) => {
+          const visible = group.items.filter((it) => canSee(effectiveRole, it));
+          if (!visible.length) return null;
+          const isOpen = !!open[group.key];
+
+          return (
+            <div key={group.key} className="rounded-lg bg-slate-900/40">
+              <button
+                onClick={() => setOpen((o) => ({ ...o, [group.key]: !o[group.key] }))}
+                className={cx(
+                  "w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg transition",
+                  "hover:bg-slate-800/60 border border-transparent hover:border-slate-800"
+                )}
+                aria-expanded={isOpen}
+              >
+                <span className="flex items-center gap-3">
+                  <span className="text-slate-300">{group.icon}</span>
+                  <span className="font-medium">{group.title}</span>
+                </span>
+                {isOpen ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+              </button>
+
+              {isOpen && (
+                <ul className="mt-1 pb-2">
+                  {visible.map((it) => {
+                    const active = pathname.startsWith(it.path);
+                    return (
+                      <li key={it.path}>
+                        <Link
+                          href={it.path}
+                          className={cx(
+                            "flex items-center gap-3 px-4 py-2 rounded-md mx-2 mt-1 text-sm transition",
+                            active ? "bg-indigo-600 text-white shadow" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                          )}
+                        >
+                          <span className={cx("shrink-0", active ? "text-white" : "text-slate-400")}>{it.icon}</span>
+                          <span className="truncate">{it.name}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
       {/* Logout */}
-      <div className="mt-auto pt-6 border-t border-blue-600">
+      <div className="p-3 border-t border-slate-800">
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 transition"
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 active:bg-rose-700 transition font-medium"
         >
-          <LogOut size={18} />
-          <span>Logout</span>
+          <LogOut size={16} />
+          Logout
         </button>
       </div>
     </aside>
