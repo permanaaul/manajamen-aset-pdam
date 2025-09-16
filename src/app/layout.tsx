@@ -13,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="antialiased">
+    <html lang="id" className="dark">
+      <body className="min-h-dvh bg-slate-950 text-slate-100 antialiased">
         <LayoutWrapper>{children}</LayoutWrapper>
       </body>
     </html>

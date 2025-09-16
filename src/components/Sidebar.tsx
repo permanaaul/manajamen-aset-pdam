@@ -15,6 +15,9 @@ import {
   ChevronRight,
   LogOut,
   User,
+  PiggyBank,
+  Wallet,
+  ReceiptText,
 } from "lucide-react";
 
 /** ====== Types ====== */
@@ -45,6 +48,7 @@ export default function Sidebar() {
   const [user, setUser] = useState<{ nama: string; role: Role } | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
+  /* user */
   useEffect(() => {
     try {
       const s = localStorage.getItem("user");
@@ -52,16 +56,15 @@ export default function Sidebar() {
     } catch {}
   }, []);
 
-  // Fallback supaya sidebar tampil walau belum login
   const effectiveRole: Role = (user?.role as Role) ?? "ADMIN";
   const displayName = user?.nama ?? "Tamu";
 
-  /** ====== Single item (Dashboard saja) ====== */
+  /** ====== Single item (Dashboard) ====== */
   const topNav: NavItem[] = useMemo(
     () => [
       {
         name: "Dashboard",
-        path: "/dashboard",
+        path: "/",
         icon: <Home size={16} />,
         roles: ["ADMIN", "PETUGAS", "TEKNISI", "PIMPINAN"],
       },
@@ -77,13 +80,23 @@ export default function Sidebar() {
         title: "Manajemen Aset",
         icon: <Package size={18} />,
         items: [
-          // GUDANG digabung: 1 menu, nanti tab di dalam halaman /gudang
           { name: "Gudang", path: "/gudang", icon: <Boxes size={16} />, roles: ["ADMIN", "PETUGAS"] },
           { name: "Aset", path: "/aset", icon: <Package size={16} />, roles: ["ADMIN", "PETUGAS"] },
           { name: "Pemeliharaan", path: "/pemeliharaan", icon: <ClipboardList size={16} />, roles: ["ADMIN", "TEKNISI"] },
           { name: "Penyusutan", path: "/penyusutan", icon: <Calculator size={16} />, roles: ["ADMIN", "PIMPINAN"] },
-          // LAPORAN dipindah ke dalam Manajemen Aset
           { name: "Laporan", path: "/laporan", icon: <BarChart3 size={16} />, roles: ["ADMIN", "PIMPINAN"] },
+        ],
+      },
+      {
+        key: "finance",
+        title: "Keuangan",
+        icon: <PiggyBank size={18} />,
+        items: [
+          // Workspace gabungan Akuntansi
+          { name: "Akuntansi", path: "/akuntansi", icon: <Calculator size={16} />, roles: ["ADMIN", "PIMPINAN"] },
+          { name: "Kas & Bank", path: "/kas-bank", icon: <Wallet size={16} />, roles: ["ADMIN", "PETUGAS"] },
+          { name: "Neraca Saldo", path: "/neraca-saldo", icon: <ReceiptText size={16} />, roles: ["ADMIN"] },
+          { name: "Laporan Keuangan", path: "/laporan-keuangan", icon: <BarChart3 size={16} />, roles: ["ADMIN", "PIMPINAN"] },
         ],
       },
       {
@@ -98,13 +111,23 @@ export default function Sidebar() {
     []
   );
 
-  // Auto-expand group yang punya route aktif
+  /* restore saved open groups + auto-open active group */
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("nav-open");
+      if (saved) setOpen(JSON.parse(saved));
+    } catch {}
+  }, []);
+
   useEffect(() => {
     setOpen((prev) => {
       const next = { ...prev };
       for (const g of groups) {
         next[g.key] = prev[g.key] ?? g.items.some((it) => pathname.startsWith(it.path));
       }
+      try {
+        localStorage.setItem("nav-open", JSON.stringify(next));
+      } catch {}
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,14 +141,16 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="w-72 bg-slate-900 text-slate-100 min-h-screen flex flex-col shadow-xl">
+    <aside className="w-72 bg-slate-900 text-slate-100 min-h-screen flex flex-col shadow-xl md:sticky md:top-0">
       {/* Brand / User */}
       <div className="px-5 pt-6 pb-4 border-b border-slate-800">
         <div className="flex items-center gap-2">
-          <div className="h-9 w-9 grid place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-blue-500 shadow-sm">🔧</div>
-          <div>
+          <div className="h-9 w-9 grid place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-blue-500 shadow-sm">
+            🔧
+          </div>
+          <div className="min-w-0">
             <h1 className="text-lg font-semibold leading-tight">PDAM • Aset</h1>
-            <p className="text-xs text-slate-400">{displayName} · {effectiveRole}</p>
+            <p className="text-xs text-slate-400 truncate">{displayName} · {effectiveRole}</p>
           </div>
         </div>
       </div>
@@ -144,7 +169,9 @@ export default function Sidebar() {
                   href={it.path}
                   className={cx(
                     "flex items-center gap-3 px-4 py-2 rounded-lg transition font-medium",
-                    active ? "bg-indigo-600 text-white shadow" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                    active
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-slate-300 hover:bg-slate-800 hover:text-white"
                   )}
                 >
                   <span className={cx("shrink-0", active ? "text-white" : "text-slate-400")}>{it.icon}</span>
@@ -163,7 +190,13 @@ export default function Sidebar() {
           return (
             <div key={group.key} className="rounded-lg bg-slate-900/40">
               <button
-                onClick={() => setOpen((o) => ({ ...o, [group.key]: !o[group.key] }))}
+                onClick={() =>
+                  setOpen((o) => {
+                    const next = { ...o, [group.key]: !o[group.key] };
+                    try { localStorage.setItem("nav-open", JSON.stringify(next)); } catch {}
+                    return next;
+                  })
+                }
                 className={cx(
                   "w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg transition",
                   "hover:bg-slate-800/60 border border-transparent hover:border-slate-800"
@@ -174,7 +207,11 @@ export default function Sidebar() {
                   <span className="text-slate-300">{group.icon}</span>
                   <span className="font-medium">{group.title}</span>
                 </span>
-                {isOpen ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                {isOpen ? (
+                  <ChevronDown size={16} className="text-slate-400" />
+                ) : (
+                  <ChevronRight size={16} className="text-slate-400" />
+                )}
               </button>
 
               {isOpen && (
@@ -186,10 +223,19 @@ export default function Sidebar() {
                         <Link
                           href={it.path}
                           className={cx(
-                            "flex items-center gap-3 px-4 py-2 rounded-md mx-2 mt-1 text-sm transition",
-                            active ? "bg-indigo-600 text-white shadow" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                            "flex items-center gap-3 px-4 py-2 rounded-md mx-2 mt-1 text-sm transition relative",
+                            active
+                              ? "bg-indigo-600 text-white shadow"
+                              : "text-slate-300 hover:bg-slate-800 hover:text-white"
                           )}
                         >
+                          {/* active marker */}
+                          <span
+                            className={cx(
+                              "absolute left-1 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full",
+                              active ? "bg-white" : "bg-transparent"
+                            )}
+                          />
                           <span className={cx("shrink-0", active ? "text-white" : "text-slate-400")}>{it.icon}</span>
                           <span className="truncate">{it.name}</span>
                         </Link>

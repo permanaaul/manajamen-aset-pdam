@@ -1,3 +1,4 @@
+//src/components/LayoutWrapper.tsx
 "use client";
 
 import { usePathname } from "next/navigation";
@@ -8,11 +9,9 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
   const hideSidebar = pathname === "/login" || pathname === "/register";
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex min-h-dvh bg-gradient-to-b from-slate-950 to-slate-900">
       {!hideSidebar && <Sidebar />}
-      <main className={`flex-1 p-6 ${hideSidebar ? "w-full" : ""}`}>
-        {children}
-      </main>
+      <main className={`flex-1 p-6 ${hideSidebar ? "w-full" : ""}`}>{children}</main>
     </div>
   );
 }

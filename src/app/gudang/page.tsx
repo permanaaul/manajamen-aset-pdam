@@ -1,4 +1,3 @@
-// app/gudang/page.tsx
 "use client";
 
 import React from "react";
@@ -15,13 +14,19 @@ import {
   PackageMinus,
   Scale,
   FileQuestion,
+  ChevronRight,
+  Search,
+  LayoutGrid,
+  AlertTriangle,
+  CircleDot,
+  ChevronDown,
 } from "lucide-react";
 import useToast from "@/components/Toast";
 
 /** =========================
  * Types + helpers
  * ========================= */
-type Row = {
+ type Row = {
   id: number;
   no: string;
   tanggal: string; // ISO
@@ -32,10 +37,10 @@ type Row = {
 };
 
 function chipTone(jenis: Row["jenis"]) {
-  if (jenis === "IN") return "bg-emerald-100 text-emerald-800 ring-emerald-200/70";
-  if (jenis === "OUT") return "bg-rose-100 text-rose-800 ring-rose-200/70";
-  if (jenis === "ADJ") return "bg-amber-100 text-amber-800 ring-amber-200/70";
-  return "bg-gray-100 text-gray-800 ring-gray-200/70";
+  if (jenis === "IN") return "bg-emerald-400/15 text-emerald-200 ring-1 ring-emerald-300/20";
+  if (jenis === "OUT") return "bg-rose-400/15 text-rose-200 ring-1 ring-rose-300/20";
+  if (jenis === "ADJ") return "bg-amber-400/15 text-amber-200 ring-1 ring-amber-300/20";
+  return "bg-slate-400/10 text-slate-300 ring-1 ring-white/10";
 }
 
 const fmtDate = (s: string) =>
@@ -47,9 +52,7 @@ const fmtDate = (s: string) =>
 /** Normalisasi row agar kompatibel API lama/baru */
 function normalizeRows(input: any[]): Row[] {
   return (input || []).map((r: any) => {
-    // nomor vs noTransaksi
     const no = r.noTransaksi ?? r.nomor ?? "-";
-    // jenis (IN/OUT/ADJ) vs tipe (RECEIPT/ISSUE/ADJUSTMENT/TRANSFER/RETURN)
     let jenis: Row["jenis"] = r.jenis;
     if (!jenis && r.tipe) {
       const t = String(r.tipe).toUpperCase();
@@ -70,76 +73,65 @@ function normalizeRows(input: any[]): Row[] {
   });
 }
 
-/** Skeleton loader */
-function SkeletonRow() {
+/** Sparkline mini chart (reusable) */
+function Sparkline({ data, className = "" }: { data: number[]; className?: string }) {
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const norm = (v: number) => ((v - min) / Math.max(1, max - min)) * 28 + 2; // 2..30 px
+  const points = data.map((v, i) => `${(i / (data.length - 1)) * 100},${32 - norm(v)}`).join(" ");
   return (
-    <tr className="animate-pulse">
-      <td className="px-3 py-3">
-        <div className="h-3 w-28 rounded bg-gray-200" />
-      </td>
-      <td className="px-3 py-3">
-        <div className="h-3 w-36 rounded bg-gray-200" />
-      </td>
-      <td className="px-3 py-3">
-        <div className="h-6 w-14 rounded-full bg-gray-200" />
-      </td>
-      <td className="px-3 py-3">
-        <div className="h-3 w-24 rounded bg-gray-200" />
-      </td>
-      <td className="px-3 py-3">
-        <div className="h-3 w-40 rounded bg-gray-200" />
-      </td>
-      <td className="px-3 py-3 text-right">
-        <div className="h-3 ml-auto w-10 rounded bg-gray-200" />
-      </td>
-    </tr>
+    <svg viewBox="0 0 100 32" preserveAspectRatio="none" className={`h-10 w-full ${className}`}>
+      <polyline fill="none" stroke="currentColor" strokeOpacity="0.15" strokeWidth="8" points={points} />
+      <polyline fill="none" stroke="currentColor" strokeWidth="2" points={points} />
+    </svg>
   );
 }
 
-/** Mini stat card */
-function StatCard({
-  title,
-  value,
-  icon,
-}: {
-  title: string;
-  value: number | string;
-  icon: React.ReactNode;
-}) {
+/** Small progress */
+function Progress({ value }: { value: number }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div className="text-[13px] font-medium text-gray-700">{title}</div>
-        <div>{icon}</div>
-      </div>
-      <div className="mt-2 text-3xl font-semibold tracking-tight text-gray-900">{value}</div>
-      <div className="mt-1 text-xs text-gray-500">Dalam daftar terbaru</div>
+    <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+      <div className="h-full bg-white/60" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
     </div>
   );
 }
 
-/** Quick link card */
-function QuickCard({
-  title,
-  desc,
-  href,
-  className = "",
-}: {
-  title: string;
-  desc: string;
-  href: string;
-  className?: string;
-}) {
+/** Cards */
+function GlassCard({ children, className = "" }: React.PropsWithChildren<{ className?: string }>) {
+  return (
+    <div className={`rounded-2xl border border-white/10 bg-white/5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/7.5 ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function StatCard({ title, value, icon, hint, spark }: { title: string; value: number | string; icon: React.ReactNode; hint?: string; spark?: number[] }) {
+  return (
+    <GlassCard className="p-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-[12px] font-medium text-slate-300/90">{title}</div>
+          <div className="mt-2 text-3xl font-semibold tracking-tight text-white">{value}</div>
+          {hint ? <div className="mt-1 text-[11px] text-slate-400">{hint}</div> : null}
+        </div>
+        <div className="rounded-xl bg-white/10 p-2 text-white">{icon}</div>
+      </div>
+      {spark ? <Sparkline data={spark} className="mt-3 text-white/70" /> : null}
+    </GlassCard>
+  );
+}
+
+function QuickCard({ title, desc, href, className = "" }: { title: string; desc: string; href: string; className?: string }) {
   return (
     <Link
       href={href}
-      className={`rounded-xl border border-gray-200 bg-white p-4 shadow-sm ring-1 ring-transparent transition hover:shadow-md hover:ring-indigo-200 ${className}`}
+      className={`group relative block rounded-2xl border border-white/10 bg-white/5 p-4 shadow-sm ring-1 ring-transparent transition hover:-translate-y-0.5 hover:shadow-md hover:ring-indigo-300/20 backdrop-blur supports-[backdrop-filter]:bg-white/7.5 ${className}`}
     >
       <div className="flex items-center justify-between">
-        <div className="font-semibold text-gray-900">{title}</div>
-        <ArrowRight className="h-4 w-4 text-gray-400" />
+        <div className="font-semibold text-white">{title}</div>
+        <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
       </div>
-      <p className="mt-1 text-sm leading-6 text-gray-600">{desc}</p>
+      <p className="mt-1 text-sm leading-6 text-slate-300">{desc}</p>
     </Link>
   );
 }
@@ -151,6 +143,9 @@ export default function GudangHome() {
   const [rows, setRows] = React.useState<Row[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [count, setCount] = React.useState(0);
+  const [tipe, setTipe] = React.useState<"ALL" | "IN" | "OUT" | "ADJ">("ALL");
+  const [q, setQ] = React.useState("");
+  const [dense, setDense] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -168,151 +163,210 @@ export default function GudangHome() {
     }
   }, [push]);
 
-  React.useEffect(() => {
-    load();
-  }, [load]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const rowsFiltered = rows.filter((r) => (tipe === "ALL" ? true : r.jenis === tipe) && (q ? (r.no + r.referensi + r.keterangan).toLowerCase().includes(q.toLowerCase()) : true));
 
   const totalIN = rows.filter((r) => r.jenis === "IN").length;
   const totalOUT = rows.filter((r) => r.jenis === "OUT").length;
   const totalADJ = rows.filter((r) => r.jenis === "ADJ").length;
+  const totalTxn = rows.length;
+  const totalLines = rows.reduce((a, b) => a + (b.lines || 0), 0);
 
   return (
-    <div className="p-6 space-y-6">
-      <View />
+    <main className="min-h-dvh bg-gradient-to-b from-slate-950 to-slate-900 text-slate-100">
+      <div className="mx-auto w-full max-w-none px-6 py-6">
+        <View />
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold text-gray-900">
-            <Boxes className="h-6 w-6 text-indigo-600" />
-            Gudang
-          </h1>
-          <p className="mt-1 text-[13px] leading-6 text-gray-600">
-            Ringkasan aktivitas & navigasi cepat modul gudang.
-          </p>
-        </div>
-
-        <div className="flex gap-2">
-          <Link
-            href="/gudang/transaksi/tambah"
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white shadow-sm ring-1 ring-indigo-500/20 transition hover:bg-indigo-700"
-          >
-            <PlusCircle className="h-4 w-4" />
-            Buat Transaksi
-          </Link>
-          <Link
-            href="/gudang/transaksi"
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
-          >
-            <ClipboardList className="h-4 w-4" />
-            Lihat Semua
-          </Link>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <StatCard
-          title="Transaksi Masuk"
-          value={totalIN}
-          icon={<PackagePlus className="h-5 w-5 text-emerald-600" />}
-        />
-        <StatCard
-          title="Transaksi Keluar"
-          value={totalOUT}
-          icon={<PackageMinus className="h-5 w-5 text-rose-600" />}
-        />
-        <StatCard title="Penyesuaian" value={totalADJ} icon={<Scale className="h-5 w-5 text-amber-600" />} />
-      </div>
-
-      {/* Quick nav */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <QuickCard title="Transaksi" desc="Kelola transaksi masuk, keluar & penyesuaian." href="/gudang/transaksi" />
-        <QuickCard title="Master Item" desc="Data barang & atributnya." href="/gudang/item" />
-        <QuickCard title="Satuan" desc="Kelola satuan (pcs, m, ltr, dst)." href="/gudang/satuan" />
-        <QuickCard
-          className="md:col-span-2"
-          title="Kartu Stok"
-          desc="Riwayat pergerakan per item (Masuk/Keluar/Saldo)."
-          href="/gudang/kartu-stok"
-        />
-      </div>
-
-      {/* Recent table */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
-          <History className="h-5 w-5 text-indigo-600" />
-          <div className="font-semibold text-gray-900">Transaksi Terbaru</div>
-          <div className="ml-auto text-sm text-gray-500">{count} total</div>
-        </div>
-
-        <div className="p-4">
-          {loading ? (
-            <table className="w-full text-sm">
-              <tbody>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <SkeletonRow key={i} />
-                ))}
-              </tbody>
-            </table>
-          ) : rows.length === 0 ? (
-            <div className="flex items-center justify-center gap-3 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-gray-600">
-              <FileQuestion className="h-5 w-5" />
-              <span>Belum ada transaksi.</span>
+        {/* Sticky sub-header */}
+        <div className="sticky top-0 z-10 -mx-6 mb-4 border-b border-white/10 bg-slate-950/70 px-6 py-4 backdrop-blur supports-[backdrop-filter]:bg-slate-950/50">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="inline-grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-white">
+                <Boxes className="h-5 w-5" />
+              </span>
+              <div>
+                <h1 className="text-xl font-semibold">Gudang</h1>
+                <p className="text-[12px] text-slate-400">Ringkasan aktivitas & navigasi cepat</p>
+              </div>
             </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-700">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">No</th>
-                  <th className="px-3 py-2 text-left font-medium">Tanggal</th>
-                  <th className="px-3 py-2 text-left font-medium">Jenis</th>
-                  <th className="px-3 py-2 text-left font-medium">Referensi</th>
-                  <th className="px-3 py-2 text-left font-medium">Keterangan</th>
-                  <th className="px-3 py-2 text-right font-medium">Lines</th>
-                </tr>
-              </thead>
-              <tbody className="text-gray-900">
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-t border-gray-200">
-                    <td className="px-3 py-2">
-                      <Link
-                        href={`/gudang/transaksi/${r.id}`}
-                        className="font-medium text-indigo-700 underline-offset-2 hover:underline"
-                      >
-                        {r.no}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2">{fmtDate(r.tanggal)}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-xs font-semibold ring-1 ${chipTone(
-                          r.jenis
-                        )}`}
-                      >
-                        {r.jenis}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{r.referensi || "-"}</td>
-                    <td className="px-3 py-2">{r.keterangan || "-"}</td>
-                    <td className="px-3 py-2 text-right">{r.lines}</td>
-                  </tr>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Search */}
+              <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm shadow-sm">
+                <Search className="h-4 w-4 text-slate-400" />
+                <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari no/ref/keterangan…" className="h-5 w-[14rem] bg-transparent text-slate-100 outline-none placeholder:text-slate-400" />
+              </label>
+
+              {/* Segmented type */}
+              <div className="flex overflow-hidden rounded-xl border border-white/10 bg-white/5 text-xs">
+                {["ALL", "IN", "OUT", "ADJ"].map((s) => (
+                  <button key={s} onClick={() => setTipe(s as typeof tipe)} className={`px-3 py-2 font-medium transition ${tipe === s ? "bg-white text-slate-900" : "text-slate-300 hover:bg-white/10"}`} aria-pressed={tipe === s}>
+                    {s}
+                  </button>
                 ))}
-              </tbody>
-            </table>
-          )}
+              </div>
+
+              {/* Density toggle */}
+              <button onClick={() => setDense((d) => !d)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm shadow-sm transition hover:bg-white/10">
+                <LayoutGrid className="h-4 w-4" />
+                {dense ? "Rapat" : "Legang"}
+              </button>
+
+              <Link href="/gudang/transaksi/tambah" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 font-medium text-slate-900 shadow-sm ring-1 ring-black/10 transition hover:opacity-90 active:scale-[.98]">
+                <PlusCircle className="h-4 w-4" /> Buat Transaksi
+              </Link>
+            </div>
+          </div>
         </div>
 
-        <div className="flex justify-end border-t border-gray-200 px-4 py-3">
-          <Link
-            href="/gudang/transaksi"
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
-          >
-            <Filter className="h-4 w-4" />
-            Lihat Semua
-          </Link>
+        {/* GRID 12 cols: main + aside */}
+        <div className="grid grid-cols-12 gap-4">
+          {/* MAIN */}
+          <div className="col-span-12 xl:col-span-9 space-y-4">
+            {/* KPIs */}
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 sm:col-span-6 lg:col-span-3"><StatCard title="Transaksi Masuk" value={totalIN} icon={<PackagePlus className="h-5 w-5" />} spark={[4,6,5,7,9,8,12]} /></div>
+              <div className="col-span-12 sm:col-span-6 lg:col-span-3"><StatCard title="Transaksi Keluar" value={totalOUT} icon={<PackageMinus className="h-5 w-5" />} spark={[5,3,4,6,4,5,7]} /></div>
+              <div className="col-span-12 sm:col-span-6 lg:col-span-3"><StatCard title="Penyesuaian" value={totalADJ} icon={<Scale className="h-5 w-5" />} spark={[1,2,1,3,2,1,2]} /></div>
+              <div className="col-span-12 sm:col-span-6 lg:col-span-3"><StatCard title="Total Entri" value={totalTxn} icon={<ClipboardList className="h-5 w-5" />} hint={`${totalLines} total baris`} /></div>
+            </div>
+
+            {/* Quick links */}
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 md:col-span-4"><QuickCard title="Transaksi" desc="Kelola transaksi masuk, keluar & penyesuaian." href="/gudang/transaksi" /></div>
+              <div className="col-span-12 md:col-span-4"><QuickCard title="Master Item" desc="Data barang & atributnya." href="/gudang/item" /></div>
+              <div className="col-span-12 md:col-span-4"><QuickCard title="Satuan" desc="Kelola satuan (pcs, m, ltr, dst)." href="/gudang/satuan" /></div>
+              <div className="col-span-12"><QuickCard title="Kartu Stok" desc="Riwayat pergerakan per item (Masuk/Keluar/Saldo)." href="/gudang/kartu-stok" /></div>
+            </div>
+
+            {/* Recent table */}
+            <GlassCard>
+              <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+                <span className="inline-grid h-8 w-8 place-items-center rounded-lg bg-white/10 text-white"><History className="h-5 w-5" /></span>
+                <div className="font-semibold text-white">Transaksi Terbaru</div>
+                <div className="ml-auto text-sm text-slate-300/90">{rowsFiltered.length} dari {count}</div>
+              </div>
+              <div className="p-4">
+                {loading ? (
+                  <table className="w-full text-sm"><tbody>{Array.from({ length: 5 }).map((_, i) => (<SkeletonRow key={i} />))}</tbody></table>
+                ) : rowsFiltered.length === 0 ? (
+                  <div className="flex items-center justify-center gap-3 rounded-lg border border-dashed border-white/15 bg-white/5 px-4 py-10 text-slate-300"><FileQuestion className="h-5 w-5" /><span>Belum ada transaksi.</span></div>
+                ) : (
+                  <table className={`w-full text-sm ${dense ? "" : "table-fixed"}`}>
+                    <thead className="bg-white/5 text-slate-300">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">No</th>
+                        <th className="px-3 py-2 text-left font-medium">Tanggal</th>
+                        <th className="px-3 py-2 text-left font-medium">Jenis</th>
+                        <th className="px-3 py-2 text-left font-medium">Referensi</th>
+                        <th className="px-3 py-2 text-left font-medium">Keterangan</th>
+                        <th className="px-3 py-2 text-right font-medium">Lines</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-100">
+                      {rowsFiltered.map((r) => (
+                        <tr key={r.id} className={`border-t border-white/10 ${dense ? "" : "hover:bg-white/5"}`}>
+                          <td className={`px-3 ${dense ? "py-1.5" : "py-2"}`}>
+                            <Link href={`/gudang/transaksi/${r.id}`} className="font-medium text-indigo-300 underline-offset-2 hover:underline">{r.no}</Link>
+                          </td>
+                          <td className={`px-3 ${dense ? "py-1.5" : "py-2"}`}>{fmtDate(r.tanggal)}</td>
+                          <td className={`px-3 ${dense ? "py-1.5" : "py-2"}`}>
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-xs font-semibold ${chipTone(r.jenis)}`}>{r.jenis}</span>
+                          </td>
+                          <td className={`px-3 ${dense ? "py-1.5" : "py-2"}`}>{r.referensi || "-"}</td>
+                          <td className={`px-3 ${dense ? "py-1.5" : "py-2"}`}>{r.keterangan || "-"}</td>
+                          <td className={`px-3 ${dense ? "py-1.5" : "py-2"} text-right`}>{r.lines}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-white/10 px-4 py-3">
+                <Link href="/gudang/transaksi" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-white/10">
+                  <Filter className="h-4 w-4" /> Lihat Semua <ChevronRight className="h-4 w-4 text-slate-400" />
+                </Link>
+              </div>
+            </GlassCard>
+          </div>
+
+          {/* ASIDE */}
+          <aside className="col-span-12 xl:col-span-3 space-y-4">
+            {/* Stock health */}
+            <GlassCard className="p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-sm font-semibold text-white">Kesehatan Stok</div>
+                <AlertTriangle className="h-4 w-4 text-amber-300" />
+              </div>
+              <div className="space-y-3 text-sm">
+                <div>
+                  <div className="mb-1 flex items-center justify-between"><span className="text-slate-300">Coverage Pergerakan</span><span className="text-slate-200">—</span></div>
+                  <Progress value={60} />
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between"><span className="text-slate-300">Item di Bawah Min</span><span className="text-slate-200">—</span></div>
+                  <Progress value={35} />
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between"><span className="text-slate-300">Akurasi Pencatatan</span><span className="text-slate-200">—</span></div>
+                  <Progress value={80} />
+                </div>
+              </div>
+            </GlassCard>
+
+            {/* Top movers (sementara by lines) */}
+            <GlassCard className="p-4">
+              <div className="mb-3 text-sm font-semibold text-white">Pergerakan Teratas</div>
+              <ul className="space-y-2 text-sm">
+                {rows
+                  .slice(0, 5)
+                  .sort((a, b) => (b.lines || 0) - (a.lines || 0))
+                  .map((r) => (
+                    <li key={r.id} className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <CircleDot className="h-4 w-4 text-slate-400" />
+                        <span className="truncate">{r.no}</span>
+                      </div>
+                      <span className="text-xs text-slate-400">{r.lines} lines</span>
+                    </li>
+                  ))}
+              </ul>
+            </GlassCard>
+
+            {/* Shortcuts */}
+            <GlassCard className="p-4">
+              <div className="mb-2 text-sm font-semibold text-white">Aksi Cepat</div>
+              <div className="grid grid-cols-1 gap-2">
+                <Link href="/gudang/transaksi/tambah" className="inline-flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm transition hover:bg-white/10">
+                  <span className="inline-flex items-center gap-2"><PlusCircle className="h-4 w-4" /> Buat Transaksi</span>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                </Link>
+                <Link href="/gudang/transaksi" className="inline-flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm transition hover:bg-white/10">
+                  <span className="inline-flex items-center gap-2"><ClipboardList className="h-4 w-4" /> Lihat Semua</span>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                </Link>
+              </div>
+            </GlassCard>
+          </aside>
         </div>
       </div>
-    </div>
+    </main>
+  );
+}
+
+/* =========================
+ * Skeleton row (dark)
+ * ========================= */
+function SkeletonRow() {
+  return (
+    <tr className="animate-pulse">
+      <td className="px-3 py-3"><div className="h-3 w-28 rounded bg-slate-700/60" /></td>
+      <td className="px-3 py-3"><div className="h-3 w-36 rounded bg-slate-700/60" /></td>
+      <td className="px-3 py-3"><div className="h-6 w-14 rounded-full bg-slate-700/60" /></td>
+      <td className="px-3 py-3"><div className="h-3 w-24 rounded bg-slate-700/60" /></td>
+      <td className="px-3 py-3"><div className="h-3 w-40 rounded bg-slate-700/60" /></td>
+      <td className="px-3 py-3 text-right"><div className="ml-auto h-3 w-10 rounded bg-slate-700/60" /></td>
+    </tr>
   );
 }

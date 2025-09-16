@@ -1,5 +1,5 @@
 // ==============================
-// prisma/schema.prisma — Manajemen Aset + Gudang (overhaul)
+// prisma/schema.prisma — Aset + Gudang + Akuntansi + Kas/Bank (FIXED)
 // ==============================
 
 generator client {
@@ -11,7 +11,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-//* ====== Enums: User & Aset ====== */
+// ===== Enums: User & Aset =====
 enum Role {
   ADMIN
   PETUGAS
@@ -32,7 +32,7 @@ enum KategoriAset {
   TANAH
 }
 
-//* ====== Penyusutan ====== */
+// ===== Penyusutan =====
 enum MetodePenyusutan {
   GARIS_LURUS
   SALDO_MENURUN
@@ -52,7 +52,7 @@ enum BasisPenyusutan {
   BULANAN
 }
 
-//* ====== Pemeliharaan (PDAM) ====== */
+// ===== Pemeliharaan (PDAM) =====
 enum JenisPekerjaanPemeliharaan {
   INSPEKSI
   PELUMASAN
@@ -70,9 +70,7 @@ enum StrategiPerlakuan {
   PREDIKTIF
 }
 
-//* ====== Inventory/Gudang ====== */
-// NOTE: enum Satuan DIHAPUS. Kita pindah ke tabel ItemSatuan agar CRUD bisa dilakukan.
-
+// ===== Inventory/Gudang =====
 enum JenisItem {
   SPAREPART
   MATERIAL
@@ -95,7 +93,54 @@ enum StatusDokumen {
   CANCELED
 }
 
-//* ====== Models ====== */
+// ===== Akuntansi =====
+enum TipeAkun {
+  ASET
+  KEWAJIBAN
+  EKUITAS
+  PENDAPATAN
+  BEBAN
+}
+
+enum PosSaldo {
+  DEBIT
+  KREDIT
+}
+
+enum StatusPeriode {
+  TERBUKA
+  TERTUTUP
+  TERKUNCI
+}
+
+enum StatusJurnal {
+  DRAFT
+  POSTED
+  VOID
+}
+
+enum SumberJurnal {
+  MANUAL
+  GUDANG
+  ASET_PENYUSUTAN
+  PEMELIHARAAN
+  KAS_BANK
+  IMPORT
+}
+
+// ===== Kas & Bank (ENUMS) =====
+enum JenisKasBank {
+  KAS     // Akun kas fisik
+  BANK    // Akun rekening bank
+}
+
+enum TipeKasBankTransaksi {
+  IN      // Penerimaan
+  OUT     // Pengeluaran
+  TRF     // Transfer antar akun kas/bank
+}
+
+// ===== Models =====
 
 model User {
   id        Int      @id @default(autoincrement())
@@ -106,10 +151,15 @@ model User {
   hp        String?
   createdAt DateTime @default(now())
 
-  stokTransaksiDibuat StokTransaksi[] @relation("StokTransaksiCreatedBy")
+  stokTransaksiDibuat StokTransaksi[]   @relation("StokTransaksiCreatedBy")
+  jurnalDibuat        Jurnal[]          @relation("JurnalCreatedBy")
+  jurnalDiposting     Jurnal[]          @relation("JurnalPostedBy")
+
+  // backref: transaksi kas/bank yang dibuat user ini
+  kasBankTransaksiDibuat KasBankTransaksi[] @relation("KasBankTransaksiCreatedBy")
 }
 
-//* ------------ Aset ------------ */
+// ---------- Aset ----------
 model Aset {
   id        Int          @id @default(autoincrement())
   nia       String       @unique
@@ -125,6 +175,7 @@ model Aset {
 
   pemeliharaan Pemeliharaan[]
   stokLines    StokTransaksiLine[]
+  jurnalLines  JurnalLine[]        @relation("JL_Aset")
 
   // ===== Penyusutan (existing) =====
   tanggalOperasi     DateTime?
@@ -136,23 +187,29 @@ model Aset {
   penyusutan         Penyusutan[]
 
   // ===== Kebijakan penyusutan (BARU) =====
-  basisPenyusutan   BasisPenyusutan @default(TAHUNAN)     // tahunan/bulanan
-  gunakanTarifCustom Boolean         @default(false)       // jika true, pakai tarifCustom
-  tarifCustom        Decimal?        @db.Decimal(6, 3)     // persen, contoh 12.500 = 12.5%
+  basisPenyusutan     BasisPenyusutan @default(TAHUNAN)
+  gunakanTarifCustom  Boolean         @default(false)
+  tarifCustom         Decimal?        @db.Decimal(6, 3)
+
+  // ===== Mapping Akun (BARU) =====
+  akunAsetId                Int?
+  akunAkumulasiPenyusutanId Int?
+  akunBebanPenyusutanId     Int?
+  akunAset                  Akun? @relation("AsetAkunAset",       fields: [akunAsetId],                references: [id], onDelete: SetNull)
+  akunAkumulasiPenyusutan   Akun? @relation("AsetAkunAkumulasi",  fields: [akunAkumulasiPenyusutanId], references: [id], onDelete: SetNull)
+  akunBebanPenyusutan       Akun? @relation("AsetAkunBeban",      fields: [akunBebanPenyusutanId],     references: [id], onDelete: SetNull)
 
   @@index([kategori])
   @@index([tahun])
-  // opsional: cepat query berdasarkan mulai penyusutan
   @@index([mulaiPenyusutan])
 }
-
 
 model Penyusutan {
   id         Int               @id @default(autoincrement())
   asetId     Int
   periode    DateTime
   metode     MetodePenyusutan
-  basis      BasisPenyusutan   @default(TAHUNAN)          // <— BARU: arsipkan basis yang dipakai
+  basis      BasisPenyusutan   @default(TAHUNAN)
   tarif      Decimal           @db.Decimal(6, 3)
   nilaiAwal  Decimal           @db.Decimal(15, 2)
   beban      Decimal           @db.Decimal(15, 2)
@@ -160,15 +217,19 @@ model Penyusutan {
   nilaiAkhir Decimal           @db.Decimal(15, 2)
   dibuatPada DateTime          @default(now())
 
+  // link jurnal (opsional)
+  jurnalId Int?
+  jurnal   Jurnal? @relation("JurnalPenyusutan", fields: [jurnalId], references: [id], onDelete: SetNull)
+
   aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
 
   @@unique([asetId, periode])
   @@index([periode])
   @@index([asetId, periode])
+  @@index([jurnalId])
 }
 
-
-//* ------------ Pemeliharaan ------------ */
+// ---------- Pemeliharaan ----------
 model Pemeliharaan {
   id        Int      @id @default(autoincrement())
   asetId    Int
@@ -184,8 +245,9 @@ model Pemeliharaan {
   strategi       StrategiPerlakuan?
   downtimeJam    Decimal?                    @db.Decimal(10, 2)
 
-  items     PemeliharaanItem[]
-  stokLines StokTransaksiLine[]
+  items       PemeliharaanItem[]
+  stokLines   StokTransaksiLine[]
+  jurnalLines JurnalLine[] @relation("JL_Pemeliharaan")
 
   aset Aset @relation(fields: [asetId], references: [id], onDelete: Cascade)
 
@@ -200,16 +262,15 @@ model PemeliharaanItem {
   hargaRp        Decimal? @db.Decimal(18, 2)
   stokLineId     Int?
 
-  pemeliharaan Pemeliharaan @relation(fields: [pemeliharaanId], references: [id], onDelete: Cascade)
-  item         Item         @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  pemeliharaan Pemeliharaan       @relation(fields: [pemeliharaanId], references: [id], onDelete: Cascade)
+  item         Item               @relation(fields: [itemId], references: [id], onDelete: Restrict)
   stokLine     StokTransaksiLine? @relation(fields: [stokLineId], references: [id], onDelete: SetNull)
 
   @@index([pemeliharaanId])
   @@index([itemId])
 }
 
-//* ------------ Gudang / Inventory ------------ */
-
+// ---------- Gudang / Inventory ----------
 model Gudang {
   id     Int     @id @default(autoincrement())
   kode   String  @unique
@@ -221,12 +282,13 @@ model Gudang {
   stok            StokSaldo[]
   transaksiAsal   StokTransaksi[] @relation("GudangAsal")
   transaksiTujuan StokTransaksi[] @relation("GudangTujuan")
+  jurnalLines     JurnalLine[]     @relation("JL_Gudang")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-//* === Master Satuan (BARU) === */
+// === Master Satuan ===
 model ItemSatuan {
   id        Int      @id @default(autoincrement())
   nama      String   @unique
@@ -244,17 +306,22 @@ model Item {
   nama     String
   jenis    JenisItem @default(SPAREPART)
 
-  // WAS: satuan Satuan @default(PCS)
-  // NOW:
   satuanId Int?
   satuan   ItemSatuan? @relation(fields: [satuanId], references: [id], onDelete: SetNull)
 
   minQty   Int?
   isActive Boolean   @default(true)
 
+  // Mapping akun (opsional)
+  akunPersediaanId Int?
+  akunBebanId      Int?
+  akunPersediaan   Akun? @relation("ItemAkunPersediaan", fields: [akunPersediaanId], references: [id], onDelete: SetNull)
+  akunBeban        Akun? @relation("ItemAkunBeban",      fields: [akunBebanId],      references: [id], onDelete: SetNull)
+
   stok              StokSaldo[]
   lines             StokTransaksiLine[]
   pemeliharaanItems PemeliharaanItem[]
+  jurnalLines       JurnalLine[] @relation("JL_Item")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -265,10 +332,8 @@ model StokSaldo {
   gudangId    Int
   itemId      Int
 
-  // Dulu Decimal, sekarang Int
   qty         Int      @default(0)
   reservedQty Int      @default(0)
-
   lastMoveAt  DateTime?
 
   gudang Gudang @relation(fields: [gudangId], references: [id], onDelete: Cascade)
@@ -294,8 +359,12 @@ model StokTransaksi {
   createdById Int?
   postedAt    DateTime?
 
+  // link jurnal (opsional)
+  jurnalId Int?
+  jurnal   Jurnal? @relation("JurnalStok", fields: [jurnalId], references: [id], onDelete: SetNull)
+
   createdBy    User?   @relation("StokTransaksiCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  gudangAsal   Gudang? @relation("GudangAsal", fields: [gudangAsalId], references: [id], onDelete: SetNull)
+  gudangAsal   Gudang? @relation("GudangAsal",   fields: [gudangAsalId],   references: [id], onDelete: SetNull)
   gudangTujuan Gudang? @relation("GudangTujuan", fields: [gudangTujuanId], references: [id], onDelete: SetNull)
 
   lines StokTransaksiLine[]
@@ -305,6 +374,7 @@ model StokTransaksi {
 
   @@index([tanggal])
   @@index([tipe, status])
+  @@index([jurnalId])
 }
 
 model StokTransaksiLine {
@@ -317,12 +387,15 @@ model StokTransaksiLine {
   pemeliharaanId Int?
   catatan        String?
 
-  header StokTransaksi @relation(fields: [headerId], references: [id], onDelete: Cascade)
-  item   Item          @relation(fields: [itemId], references: [id], onDelete: Restrict)
-  aset   Aset?         @relation(fields: [asetId], references: [id], onDelete: SetNull)
-  pemeliharaan Pemeliharaan? @relation(fields: [pemeliharaanId], references: [id], onDelete: SetNull)
+  header        StokTransaksi @relation(fields: [headerId], references: [id], onDelete: Cascade)
+  item          Item          @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  aset          Aset?         @relation(fields: [asetId], references: [id], onDelete: SetNull)
+  pemeliharaan  Pemeliharaan? @relation(fields: [pemeliharaanId], references: [id], onDelete: SetNull)
 
   pemeliharaanItems PemeliharaanItem[]
+
+  // backref relasi ke JurnalLine
+  jurnalLines JurnalLine[] @relation("JL_StokLine")
 
   @@index([headerId])
   @@index([itemId])
@@ -330,9 +403,274 @@ model StokTransaksiLine {
   @@index([asetId])
 }
 
-//* ------------ Util: Penomoran ------------ */
+// ---------- Util: Penomoran ----------
 model SequenceCounter {
   id    Int    @id @default(autoincrement())
   key   String @unique
   value Int    @default(0)
+}
+
+// =========================
+// =====  AKUNTANSI   ======
+// =========================
+
+model Akun {
+  id        Int       @id @default(autoincrement())
+  kode      String    @unique
+  nama      String
+  tipe      TipeAkun
+  pos       PosSaldo
+  isActive  Boolean   @default(true)
+  isPosting Boolean   @default(true)
+  parentId  Int?
+  parent    Akun?     @relation("AkunParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Akun[]    @relation("AkunParent")
+  level     Int       @default(1)
+  urutan    Int?
+
+  jurnalLines     JurnalLine[]
+  saldoBulanan    SaldoAkunBulanan[]
+  saldoAwalTahun  SaldoAwalAkun[]
+
+  // backrefs mapping dari Aset & Item
+  asetAkunAset        Aset[] @relation("AsetAkunAset")
+  asetAkunAkumulasi   Aset[] @relation("AsetAkunAkumulasi")
+  asetAkunBeban       Aset[] @relation("AsetAkunBeban")
+  itemAkunPersediaan  Item[] @relation("ItemAkunPersediaan")
+  itemAkunBeban       Item[] @relation("ItemAkunBeban")
+
+  // backrefs untuk MappingAkunOtomatis
+  mapDebit  MappingAkunOtomatis[] @relation("MapDebit")
+  mapKredit MappingAkunOtomatis[] @relation("MapKredit")
+
+  // backrefs Kas/Bank
+  kasBankGL               KasBankAkun[]       @relation("KasBankGL")        // Akun GL yang dipakai master Kas/Bank
+  kasBankLawanTransaksi   KasBankTransaksi[]  @relation("KasBankLawan")     // Akun lawan pada transaksi IN/OUT
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PeriodeAkuntansi {
+  id       Int           @id @default(autoincrement())
+  tahun    Int
+  bulan    Int
+  mulai    DateTime
+  akhir    DateTime
+  status   StatusPeriode @default(TERBUKA)
+  lockedAt DateTime?
+  closedAt DateTime?
+
+  jurnal Jurnal[]
+
+  @@unique([tahun, bulan])
+  @@index([status])
+}
+
+model Jurnal {
+  id        Int          @id @default(autoincrement())
+  nomor     String       @unique
+  tanggal   DateTime
+  periodeId Int
+  status    StatusJurnal @default(DRAFT)
+  sumber    SumberJurnal @default(MANUAL)
+  memo      String?
+
+  // referensi silang opsional
+  refTable String?
+  refId    Int?
+  refNo    String?
+
+  createdById Int?
+  postedById  Int?
+  postedAt    DateTime?
+  voidAt      DateTime?
+
+  periode   PeriodeAkuntansi @relation(fields: [periodeId], references: [id], onDelete: Restrict)
+  createdBy User?            @relation("JurnalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  postedBy  User?            @relation("JurnalPostedBy",  fields: [postedById],  references: [id], onDelete: SetNull)
+  lines     JurnalLine[]
+
+  // backrefs spesifik sumber
+  penyusutanList        Penyusutan[]        @relation("JurnalPenyusutan")
+  stokTransaksiList     StokTransaksi[]     @relation("JurnalStok")
+  kasBankTransaksiList  KasBankTransaksi[]  @relation("JurnalKasBank") // <— Kas/Bank
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tanggal])
+  @@index([status, tanggal])
+}
+
+model JurnalLine {
+  id        Int      @id @default(autoincrement())
+  headerId  Int
+  akunId    Int
+  uraian    String?
+  debit     Decimal  @db.Decimal(18, 2) @default(0)
+  kredit    Decimal  @db.Decimal(18, 2) @default(0)
+
+  // dimensi opsional
+  asetId         Int?
+  gudangId       Int?
+  itemId         Int?
+  pemeliharaanId Int?
+  stokLineId     Int?
+
+  header        Jurnal        @relation(fields: [headerId], references: [id], onDelete: Cascade)
+  akun          Akun          @relation(fields: [akunId], references: [id], onDelete: Restrict)
+
+  // relasi bernama agar punya opposite di model terkait
+  aset          Aset?         @relation("JL_Aset",          fields: [asetId],         references: [id], onDelete: SetNull)
+  gudang        Gudang?       @relation("JL_Gudang",        fields: [gudangId],       references: [id], onDelete: SetNull)
+  item          Item?         @relation("JL_Item",          fields: [itemId],         references: [id], onDelete: SetNull)
+  pemeliharaan  Pemeliharaan? @relation("JL_Pemeliharaan",  fields: [pemeliharaanId], references: [id], onDelete: SetNull)
+  stokLine      StokTransaksiLine? @relation("JL_StokLine", fields: [stokLineId],     references: [id], onDelete: SetNull)
+
+  @@index([headerId])
+  @@index([akunId])
+  @@index([asetId])
+  @@index([gudangId])
+  @@index([itemId])
+  @@index([pemeliharaanId])
+  @@index([stokLineId])
+}
+
+model SaldoAkunBulanan {
+  id         Int      @id @default(autoincrement())
+  akunId     Int
+  tahun      Int
+  bulan      Int
+  saldoAwal  Decimal  @db.Decimal(18, 2) @default(0)
+  debit      Decimal  @db.Decimal(18, 2) @default(0)
+  kredit     Decimal  @db.Decimal(18, 2) @default(0)
+  saldoAkhir Decimal  @db.Decimal(18, 2) @default(0)
+
+  akun Akun @relation(fields: [akunId], references: [id], onDelete: Cascade)
+
+  @@unique([akunId, tahun, bulan])
+  @@index([tahun, bulan])
+}
+
+model SaldoAwalAkun {
+  id     Int     @id @default(autoincrement())
+  akunId Int
+  tahun  Int
+  saldo  Decimal @db.Decimal(18, 2) @default(0)
+
+  akun Akun @relation(fields: [akunId], references: [id], onDelete: Cascade)
+
+  @@unique([akunId, tahun])
+}
+
+model MappingAkunOtomatis {
+  id           Int    @id @default(autoincrement())
+  kunci        String @unique   // contoh: INVENTORY_RECEIPT, INVENTORY_ISSUE, DEPRECIATION
+  debitAkunId  Int?
+  kreditAkunId Int?
+  keterangan   String?
+
+  debitAkun  Akun? @relation("MapDebit",  fields: [debitAkunId],  references: [id], onDelete: SetNull)
+  kreditAkun Akun? @relation("MapKredit", fields: [kreditAkunId], references: [id], onDelete: SetNull)
+}
+
+// =========================
+// =====  KAS & BANK  ======
+// =========================
+
+// Master akun kas/bank
+model KasBankAkun {
+  id        Int           @id @default(autoincrement())
+  kode      String        @unique                         // Kode unik akun kas/bank
+  nama      String                                        // Nama akun
+  jenis     JenisKasBank                                  // KAS / BANK
+  bank      String?
+  noRek     String?
+  pemilik   String?
+
+  // Akun GL yang merepresentasikan kas/bank ini
+  akunGLId  Int
+  akunGL    Akun          @relation("KasBankGL", fields: [akunGLId], references: [id], onDelete: Restrict)
+
+  saldoAwal Decimal       @db.Decimal(18, 2) @default(0)
+  aktif     Boolean       @default(true)
+
+  // Relasi transaksi (IN/OUT vs TRANSFER)
+  transaksiAkun   KasBankTransaksi[] @relation("KB_Akun")
+  transaksiAsal   KasBankTransaksi[] @relation("KB_Asal")
+  transaksiTujuan KasBankTransaksi[] @relation("KB_Tujuan")
+
+  // Rekap saldo bulanan
+  saldos KasBankSaldoBulanan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Transaksi kas/bank
+model KasBankTransaksi {
+  id        Int                    @id @default(autoincrement())
+  nomor     String                 @unique
+  tanggal   DateTime               @default(now())
+  tipe      TipeKasBankTransaksi
+  status    StatusDokumen          @default(DRAFT)
+
+  // IN/OUT menggunakan akunId
+  akunId    Int?
+  akun      KasBankAkun?           @relation("KB_Akun",  fields: [akunId],   references: [id], onDelete: SetNull)
+
+  // TRANSFER menggunakan asalId & tujuanId
+  asalId    Int?
+  asal      KasBankAkun?           @relation("KB_Asal",  fields: [asalId],   references: [id], onDelete: SetNull)
+  tujuanId  Int?
+  tujuan    KasBankAkun?           @relation("KB_Tujuan",fields: [tujuanId], references: [id], onDelete: SetNull)
+
+  // Akun lawan GL (untuk IN/OUT)
+  lawanAkunId Int?
+  lawanAkun   Akun?                @relation("KasBankLawan", fields: [lawanAkunId], references: [id], onDelete: SetNull)
+
+  amount    Decimal                @db.Decimal(18, 2) @default(0)
+  biaya     Decimal?               @db.Decimal(18, 2)
+  memo      String?
+  referensi String?
+
+  createdById Int?
+  createdBy   User?                @relation("KasBankTransaksiCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  postedAt    DateTime?
+  jurnalId    Int?
+  jurnal      Jurnal?              @relation("JurnalKasBank", fields: [jurnalId], references: [id], onDelete: SetNull)
+
+  // Rekonsiliasi (opsional)
+  clearedAt     DateTime?
+  clearedAmount Decimal?           @db.Decimal(18, 2)
+  statementRef  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tanggal])
+  @@index([tipe, status])
+  @@index([akunId])
+  @@index([asalId])
+  @@index([tujuanId])
+  @@index([jurnalId])
+}
+
+// Rekap saldo kas/bank per bulan
+model KasBankSaldoBulanan {
+  id         Int      @id @default(autoincrement())
+  akunId     Int
+  tahun      Int
+  bulan      Int
+  saldoAwal  Decimal  @db.Decimal(18, 2) @default(0)
+  masuk      Decimal  @db.Decimal(18, 2) @default(0)
+  keluar     Decimal  @db.Decimal(18, 2) @default(0)
+  saldoAkhir Decimal  @db.Decimal(18, 2) @default(0)
+
+  akun KasBankAkun @relation(fields: [akunId], references: [id], onDelete: Cascade)
+
+  @@unique([akunId, tahun, bulan])
+  @@index([tahun, bulan])
 }
